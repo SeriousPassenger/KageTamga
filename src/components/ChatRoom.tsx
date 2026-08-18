@@ -4,6 +4,7 @@ import type { StoredIdentity, StoredMessage } from "../lib/db";
 import {
   deleteMessage,
   getContact,
+  listContactsForFingerprint,
   listMessages,
   purgeRoom,
   saveContact,
@@ -19,6 +20,7 @@ import {
   type ConnectionRoute,
   type PeerConnectionState,
 } from "../lib/mesh";
+import { coalescePeerIdentities, isInactivePeer } from "../lib/peer-display";
 import {
   normalizeFingerprint,
   PROTOCOL_VERSION,
@@ -69,6 +71,7 @@ interface ChatRoomProps {
   identity: StoredIdentity;
   unlocked: UnlockedIdentity;
   roomSecret: string;
+  iceServers: readonly RTCIceServer[];
   developerMode: boolean;
   onLeave(): void;
   onLockIdentity(): void;
@@ -80,6 +83,7 @@ export function ChatRoom({
   identity,
   unlocked,
   roomSecret,
+  iceServers,
   developerMode,
   onLeave,
   onLockIdentity,
@@ -98,9 +102,16 @@ export function ChatRoom({
   const [messages, setMessages] = useState<VisibleMessage[]>([]);
   const [body, setBody] = useState("");
   const [error, setError] = useState<string>();
-  const [signalOnline, setSignalOnline] = useState(false);
-  const [signalingLocked, setSignalingLocked] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const [manualInput, setManualInput] = useState("");
+  const [manualOutput, setManualOutput] = useState("");
+  const [manualOutputKind, setManualOutputKind] = useState<"offer" | "answer">("offer");
+  const [manualBusy, setManualBusy] = useState(false);
+  const [copiedConnectionCode, setCopiedConnectionCode] = useState(false);
+  const [securityNotices, setSecurityNotices] = useState<Array<{
+    id: string;
+    message: string;
+  }>>([]);
   const [verificationInputs, setVerificationInputs] = useState<Record<string, string>>({});
   const [comparisonChecks, setComparisonChecks] = useState<Record<string, boolean>>({});
   const [trustAnnouncements, setTrustAnnouncements] = useState<SignedTrustAnnouncement[]>([]);
@@ -125,12 +136,14 @@ export function ChatRoom({
       if (!current.assertion || current.trust === "ignored" || current.trust === "invalid") {
         continue;
       }
-      const decision = decideContactTrust(
-        current.assertion.displayName,
-        current.assertion.pgpFingerprint,
-        contact.name,
-        contact.fingerprint,
-      );
+      const decision = current.assertion.pgpFingerprint === contact.fingerprint
+        ? "verified"
+        : decideContactTrust(
+            current.assertion.displayName,
+            current.assertion.pgpFingerprint,
+            contact.name,
+            contact.fingerprint,
+          );
       if (decision === "unrelated") continue;
       peersRef.current.set(peerId, {
         ...current,
@@ -144,12 +157,14 @@ export function ChatRoom({
     );
     setMessages((previous) => previous.map((message) => {
       if (message.mine) return message;
-      const decision = decideContactTrust(
-        message.senderName,
-        message.senderFingerprint,
-        contact.name,
-        contact.fingerprint,
-      );
+      const decision = message.senderFingerprint === contact.fingerprint
+        ? "verified"
+        : decideContactTrust(
+            message.senderName,
+            message.senderFingerprint,
+            contact.name,
+            contact.fingerprint,
+          );
       return decision === "unrelated"
         ? message
         : { ...message, locallyTrusted: decision === "verified" };
@@ -158,11 +173,21 @@ export function ChatRoom({
 
   async function hasLocalTrust(displayName: string, fingerprint: string): Promise<boolean> {
     const contact = await getContact(normalizeContactName(displayName));
-    return Boolean(
-      contact &&
-      contact.fingerprint === fingerprint &&
-      await verifyTrustedContact(contact, identity.publicKeyArmored, identity.fingerprint),
-    );
+    if (contact) {
+      return contact.fingerprint === fingerprint &&
+        await verifyTrustedContact(contact, identity.publicKeyArmored, identity.fingerprint);
+    }
+    return Boolean(await findTrustedContactForFingerprint(fingerprint));
+  }
+
+  async function findTrustedContactForFingerprint(fingerprint: string) {
+    const contacts = await listContactsForFingerprint(fingerprint);
+    for (const candidate of contacts) {
+      if (await verifyTrustedContact(candidate, identity.publicKeyArmored, identity.fingerprint)) {
+        return candidate;
+      }
+    }
+    return undefined;
   }
 
   function recordTrustAnnouncement(announcement: SignedTrustAnnouncement) {
@@ -178,6 +203,7 @@ export function ChatRoom({
 
   useEffect(() => {
     let active = true;
+    let assertionRefreshTimer: number | undefined;
     const mesh = new MeshNetwork(roomSecret, {
       onData(peerId, payload) {
         void receivePeerData(peerId, payload);
@@ -188,10 +214,27 @@ export function ChatRoom({
       onError() {
         if (active) setError(translatorRef.current("connectionFailed"));
       },
-      onSignalState(connected) {
-        if (active) setSignalOnline(connected);
+      async isPersistentFingerprintTrusted(assertion) {
+        return hasLocalTrust(assertion.displayName, assertion.pgpFingerprint);
       },
-    });
+      onSecurityEvent(event) {
+        if (!active) return;
+        const fingerprint = event.fingerprint
+          ? groupedFingerprint(event.fingerprint)
+          : translatorRef.current("unknown");
+        const key = event.type === "untrusted-relay"
+          ? "untrustedRelayDenied"
+          : event.type === "untrusted-origin"
+            ? "untrustedOriginDenied"
+            : "invalidRelayDenied";
+        const message = translatorRef.current(key, { fingerprint });
+        setSecurityNotices((previous) => [
+          ...previous.slice(-7),
+          { id: `${Date.now()}:${event.peerId}:${event.type}`, message },
+        ]);
+        setError(message);
+      },
+    }, iceServers);
     meshRef.current = mesh;
 
     void mesh.connect().then(async (derivedRoomId) => {
@@ -203,8 +246,9 @@ export function ChatRoom({
         "",
         `${location.pathname}${location.search}#room=${roomSecret}`,
       );
-      assertionRef.current = await signIdentityAssertion(
-        {
+      const sessionNonce = randomId();
+      const refreshAssertion = async () => {
+        const assertion = await signIdentityAssertion({
           version: PROTOCOL_VERSION,
           peerId: mesh.peerId,
           roomId: derivedRoomId,
@@ -214,11 +258,17 @@ export function ChatRoom({
           kemAlgorithm: "ML-KEM-768",
           kemPublicKey: identity.hybridPublicKey,
           issuedAt: new Date().toISOString(),
-          sessionNonce: randomId(),
-        },
-        unlocked.pgpPrivateKey,
-      );
-      mesh.broadcast(assertionRef.current);
+          sessionNonce,
+        }, unlocked.pgpPrivateKey);
+        if (!active) return;
+        assertionRef.current = assertion;
+        await mesh.setLocalIdentity(assertion, unlocked.pgpPrivateKey);
+        mesh.broadcast(assertion);
+      };
+      await refreshAssertion();
+      assertionRefreshTimer = window.setInterval(() => {
+        void refreshAssertion().catch(() => setError(translatorRef.current("operationFailed")));
+      }, 7 * 60 * 1000);
       await loadHistory(derivedRoomId);
     }).catch(() => {
       if (active) setError(translatorRef.current("connectionFailed"));
@@ -239,6 +289,7 @@ export function ChatRoom({
         try {
           const assertion = await verifyIdentityAssertion(value, peerId, roomIdRef.current);
           const existingPeer = peersRef.current.get(peerId);
+          await mesh.observePeerIdentity(peerId, assertion);
           if (ignoredFingerprintsRef.current.has(assertion.pgpFingerprint)) {
             mesh.ignorePeer(peerId);
             updatePeer(peerId, { assertion, route: "offline", trust: "ignored", error: undefined });
@@ -248,22 +299,30 @@ export function ChatRoom({
             existingPeer?.assertion &&
             (existingPeer.assertion.sessionNonce !== assertion.sessionNonce ||
               existingPeer.assertion.pgpFingerprint !== assertion.pgpFingerprint ||
+              existingPeer.assertion.pgpPublicKey !== assertion.pgpPublicKey ||
               existingPeer.assertion.kemPublicKey !== assertion.kemPublicKey ||
               existingPeer.assertion.displayName !== assertion.displayName)
           ) {
             throw new Error("A connected peer changed its signed identity.");
           }
           const contact = await getContact(normalizeContactName(assertion.displayName));
-          const authenticRecord = contact
-            ? await verifyTrustedContact(contact, identity.publicKeyArmored, identity.fingerprint)
-            : false;
-          const trust: TrustState = !contact
-            ? "unverified"
-            : !authenticRecord
+          let trust: TrustState;
+          if (contact) {
+            const authenticRecord = await verifyTrustedContact(
+              contact,
+              identity.publicKeyArmored,
+              identity.fingerprint,
+            );
+            trust = !authenticRecord
               ? "invalid"
               : contact.fingerprint === assertion.pgpFingerprint
                 ? "verified"
                 : "changed";
+          } else {
+            trust = await findTrustedContactForFingerprint(assertion.pgpFingerprint)
+              ? "verified"
+              : "unverified";
+          }
           updatePeer(peerId, { assertion, trust, error: undefined });
           if (!existingPeer?.assertion) {
             for (const trustedPeer of peersRef.current.values()) {
@@ -273,6 +332,11 @@ export function ChatRoom({
             }
           }
           if (trust === "verified") {
+            void mesh.authorizePeer(peerId, assertion).catch(() => {
+              setError(translatorRef.current("invalidRelayDenied", {
+                fingerprint: groupedFingerprint(assertion.pgpFingerprint),
+              }));
+            });
             void broadcastTrustForPeer({ peerId, route: existingPeer?.route ?? "connecting", assertion, trust });
           }
         } catch {
@@ -514,6 +578,7 @@ export function ChatRoom({
 
     return () => {
       active = false;
+      if (assertionRefreshTimer !== undefined) window.clearInterval(assertionRefreshTimer);
       mesh.close();
       meshRef.current = null;
       peersRef.current.clear();
@@ -522,7 +587,7 @@ export function ChatRoom({
       announcedSubjectsRef.current.clear();
       ignoredFingerprintsRef.current.clear();
     };
-  }, [identity, roomSecret, unlocked]);
+  }, [iceServers, identity, roomSecret, unlocked]);
 
   function appendMessage(message: VisibleMessage) {
     setMessages((previous) => {
@@ -556,7 +621,10 @@ export function ChatRoom({
     }
   }
 
-  const connectedPeers = peers.filter(
+  const visiblePeers = useMemo(() => coalescePeerIdentities(peers), [peers]);
+  const activePeers = visiblePeers.filter((peer) => !isInactivePeer(peer));
+  const inactivePeers = visiblePeers.filter(isInactivePeer);
+  const connectedPeers = visiblePeers.filter(
     (peer) =>
       peer.trust !== "ignored" &&
       (peer.route === "direct" || peer.route === "relay"),
@@ -570,10 +638,22 @@ export function ChatRoom({
   function recipientSnapshotIsCurrent(
     selected: ReadonlyArray<PeerView & { assertion: SignedIdentityAssertion }>,
   ): boolean {
-    return selected.length > 0 && selected.every((snapshot) => {
+    const currentRecipients = coalescePeerIdentities([...peersRef.current.values()]).filter(
+      (peer): peer is PeerView & { assertion: SignedIdentityAssertion } =>
+        peer.trust === "verified" &&
+        Boolean(peer.assertion) &&
+        (peer.route === "direct" || peer.route === "relay"),
+    );
+    if (selected.length === 0 || selected.length !== currentRecipients.length) return false;
+    const currentByFingerprint = new Map(
+      currentRecipients.map((peer) => [peer.assertion.pgpFingerprint, peer]),
+    );
+    return selected.every((snapshot) => {
+      const representative = currentByFingerprint.get(snapshot.assertion.pgpFingerprint);
       const current = peersRef.current.get(snapshot.peerId);
       const assertion = current?.assertion;
       return Boolean(
+        representative?.peerId === snapshot.peerId &&
         current &&
         assertion &&
         current.trust === "verified" &&
@@ -592,7 +672,7 @@ export function ChatRoom({
   async function send(event: FormEvent) {
     event.preventDefault();
     const text = body.trim();
-    const liveConnectedPeers = [...peersRef.current.values()].filter(
+    const liveConnectedPeers = coalescePeerIdentities([...peersRef.current.values()]).filter(
       (peer) =>
         peer.trust !== "ignored" &&
         (peer.route === "direct" || peer.route === "relay"),
@@ -717,9 +797,14 @@ export function ChatRoom({
       );
       await saveContact(contact);
       reconcileCurrentContact(contact);
-      const reconciledPeer = peersRef.current.get(peer.peerId);
-      if (reconciledPeer?.trust === "verified") {
-        await broadcastTrustForPeer(reconciledPeer);
+      for (const reconciledPeer of peersRef.current.values()) {
+        if (
+          reconciledPeer.trust === "verified" &&
+          reconciledPeer.assertion?.pgpFingerprint === contact.fingerprint
+        ) {
+          await meshRef.current?.authorizePeer(reconciledPeer.peerId, reconciledPeer.assertion);
+          await broadcastTrustForPeer(reconciledPeer);
+        }
       }
       setVerificationInputs((previous) => ({ ...previous, [peer.peerId]: "" }));
     } catch {
@@ -772,9 +857,29 @@ export function ChatRoom({
 
   function ignorePeer(peer: PeerView) {
     if (!confirm(t("ignorePeerConfirm"))) return;
-    if (peer.assertion) ignoredFingerprintsRef.current.add(peer.assertion.pgpFingerprint);
-    meshRef.current?.ignorePeer(peer.peerId);
-    updatePeer(peer.peerId, { route: "offline", trust: "ignored", error: undefined });
+    const fingerprint = peer.assertion?.pgpFingerprint;
+    if (fingerprint) ignoredFingerprintsRef.current.add(fingerprint);
+    const matchingPeerIds = [...peersRef.current.values()]
+      .filter((candidate) =>
+        candidate.peerId === peer.peerId ||
+        Boolean(fingerprint && candidate.assertion?.pgpFingerprint === fingerprint),
+      )
+      .map((candidate) => candidate.peerId);
+    for (const peerId of matchingPeerIds) {
+      meshRef.current?.ignorePeer(peerId);
+      const current = peersRef.current.get(peerId);
+      if (current) {
+        peersRef.current.set(peerId, {
+          ...current,
+          route: "offline",
+          trust: "ignored",
+          error: undefined,
+        });
+      }
+    }
+    setPeers(
+      [...peersRef.current.values()].sort((left, right) => left.peerId.localeCompare(right.peerId)),
+    );
     setError(undefined);
   }
 
@@ -784,16 +889,53 @@ export function ChatRoom({
     window.setTimeout(() => setCopiedInvite(false), 1_500);
   }
 
+  async function createConnectionOffer() {
+    setManualBusy(true);
+    setError(undefined);
+    try {
+      const code = await meshRef.current?.createManualOffer();
+      if (!code) throw new Error("Mesh unavailable");
+      setManualOutput(code);
+      setManualOutputKind("offer");
+    } catch {
+      setError(t("connectionCodeFailed"));
+    } finally {
+      setManualBusy(false);
+    }
+  }
+
+  async function processConnectionCode() {
+    if (!manualInput.trim()) return;
+    setManualBusy(true);
+    setError(undefined);
+    try {
+      const result = await meshRef.current?.importManualSignal(manualInput);
+      if (!result) throw new Error("Mesh unavailable");
+      if (result.kind === "offer") {
+        setManualOutput(result.answerCode);
+        setManualOutputKind("answer");
+      } else {
+        setManualOutput("");
+      }
+      setManualInput("");
+    } catch {
+      setError(t("invalidConnectionCode"));
+    } finally {
+      setManualBusy(false);
+    }
+  }
+
+  async function copyConnectionCode() {
+    if (!manualOutput) return;
+    await navigator.clipboard.writeText(manualOutput);
+    setCopiedConnectionCode(true);
+    window.setTimeout(() => setCopiedConnectionCode(false), 1_500);
+  }
+
   async function purgeConversation() {
     if (!confirm(t("purgeConversationConfirm"))) return;
     await purgeRoom(roomId);
     setMessages([]);
-  }
-
-  function lockSignaling() {
-    meshRef.current?.lockSignaling();
-    setSignalingLocked(true);
-    setSignalOnline(false);
   }
 
   function leave() {
@@ -803,8 +945,33 @@ export function ChatRoom({
 
   function nameForFingerprint(fingerprint: string): string {
     if (fingerprint === identity.fingerprint) return identity.displayName;
-    return peers.find((peer) => peer.assertion?.pgpFingerprint === fingerprint)
+    return visiblePeers.find((peer) => peer.assertion?.pgpFingerprint === fingerprint)
       ?.assertion?.displayName ?? groupedFingerprint(fingerprint);
+  }
+
+  function renderPeerCard(peer: PeerView) {
+    return (
+      <PeerCard
+        key={peer.peerId}
+        peer={peer}
+        t={t}
+        input={verificationInputs[peer.peerId] ?? ""}
+        compared={comparisonChecks[peer.peerId] ?? false}
+        trustsYou={Boolean(
+          peer.assertion && trustAnnouncements.some((announcement) =>
+            announcement.initiatorFingerprint === peer.assertion?.pgpFingerprint &&
+            announcement.subjectFingerprint === identity.fingerprint),
+        )}
+        onInput={(value) =>
+          setVerificationInputs((previous) => ({ ...previous, [peer.peerId]: value }))
+        }
+        onCompared={(value) =>
+          setComparisonChecks((previous) => ({ ...previous, [peer.peerId]: value }))
+        }
+        onVerify={() => void verifyPeer(peer)}
+        onIgnore={() => ignorePeer(peer)}
+      />
+    );
   }
 
   return (
@@ -813,13 +980,9 @@ export function ChatRoom({
         <div>
           <div className="eyebrow">{t("chatTitle")}</div>
           <h1>{identity.displayName}</h1>
-          <div className={`signal-status ${signalOnline ? "online" : "offline"}`}>
+          <div className="signal-status online">
             <span />
-            {signalingLocked
-            ? `${t("signalOffline")} · ${t("signalingLocked")}`
-              : signalOnline
-                ? t("signalOnline")
-                : t("signalConnecting")}
+            {t("manualMeshStatus")}
           </div>
         </div>
 
@@ -831,33 +994,61 @@ export function ChatRoom({
           </button>
         </section>
 
+        <details className="manual-connect" open={connectedPeers.length === 0}>
+          <summary>{t("manualConnectTitle")}</summary>
+          <p>{t("manualConnectExplain")}</p>
+          <div className="alert warning compact">{t("connectionCodeWarning")}</div>
+          <button
+            className="button secondary"
+            type="button"
+            disabled={manualBusy || !roomId}
+            onClick={() => void createConnectionOffer()}
+          >
+            {manualBusy ? t("loading") : t("createConnectionOffer")}
+          </button>
+          <label>
+            <span>{t("pasteConnectionCode")}</span>
+            <textarea
+              rows={5}
+              spellCheck={false}
+              autoComplete="off"
+              value={manualInput}
+              onChange={(event) => setManualInput(event.target.value)}
+            />
+          </label>
+          <button
+            className="button ghost"
+            type="button"
+            disabled={manualBusy || !manualInput.trim()}
+            onClick={() => void processConnectionCode()}
+          >
+            {t("processConnectionCode")}
+          </button>
+          {manualOutput && (
+            <div className="manual-output">
+              <strong>{manualOutputKind === "offer" ? t("offerCodeReady") : t("answerCodeReady")}</strong>
+              <textarea readOnly rows={5} value={manualOutput} />
+              <button className="button secondary" type="button" onClick={() => void copyConnectionCode()}>
+                {copiedConnectionCode ? t("copied") : t("copyConnectionCode")}
+              </button>
+            </div>
+          )}
+        </details>
+
         <section className="peer-list">
           <div className="section-heading">
             <h2>{t("peerCount", { count: connectedPeers.length })}</h2>
           </div>
-          {peers.length === 0 && <p className="muted">{t("noPeers")}</p>}
-          {peers.map((peer) => (
-            <PeerCard
-              key={peer.peerId}
-              peer={peer}
-              t={t}
-              input={verificationInputs[peer.peerId] ?? ""}
-              compared={comparisonChecks[peer.peerId] ?? false}
-              trustsYou={Boolean(
-                peer.assertion && trustAnnouncements.some((announcement) =>
-                  announcement.initiatorFingerprint === peer.assertion?.pgpFingerprint &&
-                  announcement.subjectFingerprint === identity.fingerprint),
-              )}
-              onInput={(value) =>
-                setVerificationInputs((previous) => ({ ...previous, [peer.peerId]: value }))
-              }
-              onCompared={(value) =>
-                setComparisonChecks((previous) => ({ ...previous, [peer.peerId]: value }))
-              }
-              onVerify={() => void verifyPeer(peer)}
-              onIgnore={() => ignorePeer(peer)}
-            />
-          ))}
+          {visiblePeers.length === 0 && <p className="muted">{t("noPeers")}</p>}
+          {activePeers.map(renderPeerCard)}
+          {inactivePeers.length > 0 && (
+            <details className="inactive-peer-list">
+              <summary>{t("inactivePeers")} ({inactivePeers.length})</summary>
+              <div className="inactive-peer-grid">
+                {inactivePeers.map(renderPeerCard)}
+              </div>
+            </details>
+          )}
         </section>
 
         {trustAnnouncements.length > 0 && (
@@ -877,14 +1068,6 @@ export function ChatRoom({
         )}
 
         <div className="sidebar-actions stack">
-          <button
-            className="button ghost"
-            type="button"
-            disabled={signalingLocked || connectedPeers.length === 0}
-            onClick={lockSignaling}
-          >
-            {t("lockSignaling")}
-          </button>
           <button className="button ghost" type="button" onClick={leave}>{t("leaveRoom")}</button>
           <button className="text-button" type="button" onClick={onLockIdentity}>{t("lockIdentity")}</button>
         </div>
@@ -902,6 +1085,14 @@ export function ChatRoom({
           </div>
         </header>
 
+        {securityNotices.length > 0 && (
+          <section className="security-event-list" aria-live="assertive">
+            {securityNotices.map((notice) => (
+              <div className="alert danger" key={notice.id}>{notice.message}</div>
+            ))}
+          </section>
+        )}
+
         {developerMode && (
           <details className="debug-panel room-debug">
             <summary>{t("debugRoom")} · {t("debugRedacted")}</summary>
@@ -909,11 +1100,16 @@ export function ChatRoom({
               roomId,
               roomSecret: "[REDACTED]",
               topology: "WebRTC full mesh",
-              signaling: {
-                online: signalOnline,
-                locked: signalingLocked,
-                serverStorage: "none",
-                encrypted: "AES-256-GCM derived from URL-fragment secret",
+              bootstrap: {
+                mode: "manual encrypted offer/answer plus dual-signed trusted-peer introductions",
+                applicationBackend: "none",
+                centralizedRendezvous: false,
+              },
+              ice: {
+                servers: iceServers.map((server) => server.urls),
+                turnCredential: iceServers.some((server) => Boolean(server.credential))
+                  ? "[REDACTED; MEMORY ONLY]"
+                  : null,
               },
               localPeerId: meshRef.current?.peerId ?? null,
               peers: peers.map((peer) => ({

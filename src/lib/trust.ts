@@ -1,6 +1,7 @@
 import * as openpgp from "openpgp";
 import type { PrivateKey } from "openpgp";
 import type { StoredContact } from "./db";
+import { assertSupportedOpenPgpKey } from "./pgp-policy";
 
 interface TrustFields {
   version: 1;
@@ -54,11 +55,17 @@ export async function createTrustedContact(
   ownerFingerprint: string,
   ownerPrivateKey: PrivateKey,
 ): Promise<StoredContact> {
+  const contactKey = await openpgp.readKey({ armoredKey: publicKeyArmored });
+  await assertSupportedOpenPgpKey(contactKey);
+  const canonicalFingerprint = fingerprint.toUpperCase();
+  if (contactKey.getFingerprint().toUpperCase() !== canonicalFingerprint) {
+    throw new Error("The trusted public key does not match the compared fingerprint.");
+  }
   const fields: TrustFields = {
     version: 1,
     name,
-    fingerprint: fingerprint.toUpperCase(),
-    publicKeyArmored,
+    fingerprint: canonicalFingerprint,
+    publicKeyArmored: contactKey.armor(),
     verifiedAt: new Date().toISOString(),
     ownerFingerprint: ownerFingerprint.toUpperCase(),
   };

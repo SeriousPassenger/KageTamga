@@ -22,7 +22,7 @@ for (const path of (await walk("dist"))
 const shellDigest = createHash("sha256").update(JSON.stringify(assets)).digest("base64url");
 const workerPath = "dist/integrity-worker.js";
 const worker = await readFile(workerPath, "utf8");
-const placeholder = "__QUIETWIRE_BUILD_STAMP__";
+const placeholder = "__KAGETAMGA_BUILD_STAMP__";
 if (!worker.includes(placeholder)) throw new Error("Integrity Worker build-stamp placeholder is missing.");
 await writeFile(workerPath, worker.replaceAll(placeholder, shellDigest), "utf8");
 console.log(`Stamped integrity worker for shell ${shellDigest}.`);

@@ -145,7 +145,7 @@ export function PreflightGate({ t, onContinue }: PreflightGateProps) {
               </button>
               <a
                 className="button ghost"
-                href="https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat"
+                href="https://github.com/SeriousPassenger/KageTamga"
                 target="_blank"
                 rel="noopener noreferrer"
               >

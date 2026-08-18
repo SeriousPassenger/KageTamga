@@ -15,7 +15,7 @@ export function normalizeRoomSecret(value: string): string | null {
     if (trimmed.startsWith("#")) {
       candidate = trimmed.slice(1);
     } else if (trimmed.includes("#")) {
-      candidate = new URL(trimmed, "https://quietwire.invalid/").hash.slice(1);
+      candidate = new URL(trimmed, "https://kagetamga.invalid/").hash.slice(1);
     }
   } catch {
     return null;
@@ -47,7 +47,7 @@ export function roomLink(secret: string): string {
 
 export async function deriveRoomId(secret: string): Promise<string> {
   const secretBytes = fromBase64Url(secret);
-  const context = utf8("quietwire:room-id:v1:");
+  const context = utf8("kagetamga:room-id:v1:");
   const material = new Uint8Array(context.length + secretBytes.length);
   material.set(context);
   material.set(secretBytes, context.length);
@@ -66,8 +66,8 @@ export async function deriveSignalingKey(secret: string): Promise<CryptoKey> {
     {
       name: "HKDF",
       hash: "SHA-256",
-      salt: utf8("quietwire:signaling-salt:v1"),
-      info: utf8("quietwire:signaling-key:v1"),
+      salt: utf8("kagetamga:signaling-salt:v1"),
+      info: utf8("kagetamga:signaling-key:v1"),
     },
     material,
     { name: "AES-GCM", length: 256 },

@@ -1,229 +1,139 @@
-# Cloudflare deployment and privacy hardening
+# Static deployment and privacy hardening
 
-QuietWire is packaged as Cloudflare Workers Static Assets, one Worker, and one SQLite-backed Durable Object class. `assets.run_worker_first` is globally `true`: every network request reaches the Worker first for HTTPS enforcement and security headers, then application files are served through the Static Assets binding. The Durable Object is used only for live WebSocket signaling, and the code does not use its persistent storage. There is no D1, KV, R2, Queue, external API, TURN credential, or application secret to provision.
+KageTamga is a static application. It does not require or use an application server, function, database, WebSocket endpoint, rendezvous API, account, secret, or message store. Any host that serves unchanged files over HTTPS can publish it.
 
-This guide favors privacy over telemetry and convenience. Cloudflare dashboard names can change; when a label differs, search the dashboard for the named feature and verify the result from the browser.
+## Build
 
-## Prerequisites
+Requirements:
 
-- A Cloudflare account with Workers enabled. The project is designed to be usable on the Workers Free plan within its current limits; traffic and platform limits remain the operator's responsibility.
-- Node.js 22 or newer and npm.
-- A modern browser with Service Workers, Cache Storage, WebRTC data channels, WebCrypto, IndexedDB, and current JavaScript support.
-- Optional: a domain active in the **same Cloudflare account** as the Worker.
-
-## One-command application deploy
+- Node.js 22 or newer;
+- npm;
+- an HTTPS static host that does not inject or transform content.
 
 ```bash
-git clone https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat.git
-cd cloudflare-p2p-e2ee-chat
-npm ci
-npx wrangler login
-npm run deploy
-```
-
-`npm run deploy` performs a TypeScript and Vite build, generates third-party notices, stamps the integrity Service Worker for that shell, generates the shell-integrity manifest/build digest including the stamped worker, runs the generated-bundle security scan, and calls `wrangler deploy`. On the first deploy, Wrangler applies the `v1` migration in `wrangler.jsonc` and creates the `SignalingRoom` Durable Object class.
-
-No environment variables or secrets are required. The resulting `https://…workers.dev` address is a secure context and should work immediately.
-
-If the Worker name already exists in your account, change only the top-level `name` in `wrangler.jsonc`. Do not casually rename `SignalingRoom` or edit an already-applied migration; Durable Object class migrations require an explicit new migration tag.
-
-Check the deployment:
-
-```bash
-curl -fsS https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/health
-```
-
-The expected response includes `"ok":true`, `"storage":"none"`, and `"signaling":"ephemeral"`.
-
-## Add a custom domain
-
-Use the Worker's native custom-domain flow:
-
-1. Open **Workers & Pages** and select the deployed Worker.
-2. Open **Settings** → **Domains & Routes** (or the equivalent current domain/route panel).
-3. Choose **Add** → **Custom domain**.
-4. Enter a hostname from a zone in the same Cloudflare account and let Cloudflare create the DNS binding and certificate.
-
-Do not manually CNAME the hostname to another account's `workers.dev` or `default-page.registrar.cloudflare.com` host. Cloudflare rejects many cross-account CNAME arrangements with Error 1014. A Worker custom domain or same-zone Worker route is the supported approach.
-
-Because the Worker runs first globally, it returns an HTTPS redirect before serving an initial HTTP shell request. Still enable Cloudflare **Always Use HTTPS** or an equivalent zone Redirect Rule for the custom hostname as defense in depth and, where it runs before Workers, to avoid spending a Worker invocation on redirects. The application preflight also refuses a non-local insecure context. All Worker/static responses send HSTS. Do not publish an alternate HTTP-only origin. The HSTS value includes `includeSubDomains` and `preload`; use a dedicated chat hostname unless every hostname below the chosen name is permanently HTTPS-ready. The header alone does not submit a registrable domain to browser preload lists.
-
-## Required Cloudflare privacy settings
-
-Source configuration cannot control every zone/account feature. Apply this checklist to the production hostname.
-
-### Disable browser telemetry and injection
-
-- Turn **Browser Insights** off for the zone.
-- Disable/remove the site from **Web Analytics**, and remove any manually installed analytics snippet.
-- Keep **Zaraz** and Cloudflare Apps/integrations disabled unless their exact scripts and data flows have been reviewed and deliberately added to the threat model.
-- Turn **Rocket Loader** off. It rewrites script loading and is unnecessary for this small application.
-- Disable any feature, Transform Rule, Worker route, HTML rewriter, tag manager, font optimizer, or email-obfuscation feature that injects or rewrites page markup.
-
-The response CSP permits scripts and network connections only from the same origin. That should block many accidental additions, but an injection attempt is still a deployment error. Do not rely on CSP as the only control.
-
-A browser analytics product may be documented as collecting only performance data, but any JavaScript that actually executes in the document inherits that page's ability to observe DOM state and application memory. That makes “not intended to read keys” weaker than “no extra script is present.” QuietWire therefore removes and blocks such scripts instead of granting them trust.
-
-### Disable Worker application logs
-
-`wrangler.jsonc` contains:
-
-```json
-"observability": {
-  "enabled": false
-}
-```
-
-After deployment, open the Worker's **Observability** or **Logs** settings and confirm Workers Logs are disabled. Do not add `console.log` statements containing URLs, room IDs, peer IDs, signaling packets, keys, errors with cryptographic material, or message data.
-
-Disabling Workers Logs does not mean Cloudflare has no records. Cloudflare can still process account, billing, abuse, firewall, request, network, and operational metadata under its platform policies. The goal is to avoid creating an application-level log or transcript.
-
-### Do not add server storage
-
-The only bindings should be `ASSETS` plus `SIGNALING_ROOMS`, and `assets.run_worker_first` should remain globally `true`. This guarantees the first-visit redirect and Worker security headers but means each network asset request invokes the Worker. The integrity Service Worker's verified, build-specific pinned cache minimizes later shell traffic after it controls the page. Do not add D1, KV, R2, Queues, Analytics Engine, Logpush, or a third-party monitoring destination without redesigning and disclosing the privacy model.
-
-The Durable Object's SQLite-backed class type is required by current Cloudflare deployment mechanics, but QuietWire does not call `ctx.storage`. Its hibernatable WebSocket state exists only to route currently connected peers.
-
-### Apply edge abuse controls
-
-The source requires an exact same-origin WebSocket `Origin`, caps a room at eight signaling peers, limits each signaling socket to 200 messages per 10 seconds, and enforces client room/unique-peer caps. Keep those checks enabled. They do not stop distributed floods, IP rotation, repeated room creation, or all resource exhaustion. Configure suitable Cloudflare WAF/rate-limiting and IP abuse rules for the deployed hostname and expected traffic. Apply rules to `/api/signal/*` with care so legitimate WebSocket upgrades continue to work; test them with multiple disposable peers. Do not log signaling bodies as part of abuse inspection.
-
-## Verify the deployed result
-
-### 1. Verify the local bundle
-
-```bash
+git clone https://github.com/SeriousPassenger/KageTamga.git
+cd KageTamga
 npm ci
 npm run check
 ```
 
-The build hashes the non-Service-Worker HTML/JavaScript/CSS shell, stamps that shell digest into `dist/integrity-worker.js`, and then generates `dist/integrity-manifest.json`. The manifest contains SHA-256 digests of the stamped `/integrity-worker.js` and every other generated HTML/JavaScript/CSS asset; its `shellDigest` covers the non-worker shell and its `buildDigest` covers the complete canonical asset map including the stamped worker. The verifier independently reads and hashes every manifest-listed built file, recomputes both canonical digests, and checks the worker's embedded stamp. The build also fails if generated HTML, JavaScript, CSS, or JSON contains the configured Cloudflare RUM/common analytics markers. Generated HTML fails if a `<script src>` or `<link href>` points to an HTTP(S) or protocol-relative remote URL.
+`npm run check` type-checks, runs the complete test suite, builds the app, generates all production license text, stamps the integrity Service Worker, creates the canonical integrity manifest, scans the generated output, and refreshes the static digest card.
 
-This is not a general static proof that code cannot construct a remote URL dynamically, and documentation/source links are not runtime script/style references. Runtime preflight and deployed Network inspection remain separate controls.
+Publish **the contents of `dist/`**, not the source tree. A release contains at least:
 
-### 2. Verify headers at the edge
+- `index.html`;
+- `assets/` with content-hashed JavaScript and CSS;
+- `integrity-worker.js`;
+- `integrity-manifest.json`;
+- `_headers`;
+- `THIRD_PARTY_LICENSES.txt`;
+- `.nojekyll` when present.
 
-Check both an application path and an API path. Both pass through the Worker's authoritative header function before a static or API response is returned:
+The build uses relative asset URLs. It may be mounted at `https://example.test/` or a trailing-slash subpath such as `https://example.test/apps/kagetamga/`. Do not rewrite the application to a different path after building, and do not place `integrity-worker.js` below the directory containing `index.html`.
 
-```bash
-curl -sS -D - -o /dev/null https://chat.example.com/
-curl -sS -D - -o /dev/null https://chat.example.com/api/health
-```
+## Static-host requirements
 
-Confirm both responses contain at least:
+The host must:
 
-- `Content-Security-Policy` with `default-src 'self'`, `script-src 'self'`, `connect-src 'self'`, `worker-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, and Trusted Types;
-- `Cross-Origin-Opener-Policy: same-origin`;
-- `Cross-Origin-Embedder-Policy: require-corp`;
-- `Cross-Origin-Resource-Policy: same-origin`;
-- `Permissions-Policy` disabling unused sensitive capabilities;
-- `Referrer-Policy: no-referrer`;
-- `X-Content-Type-Options: nosniff`;
-- `Strict-Transport-Security`; and
-- `Cache-Control: no-store, no-transform`.
+1. serve every application URL through HTTPS (localhost is permitted only for development);
+2. return the exact built bytes without HTML injection, optimization, minification, script rewriting, automatic tag insertion, or compression bugs that change decoded content;
+3. serve JavaScript, CSS, JSON, and HTML with correct MIME types and `nosniff` compatibility;
+4. serve `integrity-manifest.json`, each content-hashed asset, and `integrity-worker.js` without cross-origin redirects;
+5. leave the application directory and Service Worker scope stable across releases;
+6. avoid analytics, consent managers, ads, tag managers, remote fonts, support widgets, and other injected runtime code;
+7. preserve `THIRD_PARTY_LICENSES.txt` in the published distribution.
 
-Test the real custom hostname through Cloudflare, not only localhost. A different route or upstream Worker can change headers.
+If the provider supports a `_headers` file, the included file requests:
 
-### 3. Verify there is no injected beacon
+- a same-origin-only Content Security Policy;
+- Trusted Types for script sinks;
+- COOP `same-origin` and COEP `require-corp`;
+- same-origin resource policy;
+- camera, microphone, location, payment, USB, display capture, and sensor denial;
+- no referrer, no framing, no MIME sniffing, no indexing, and no-store/no-transform caching;
+- HSTS with subdomain and preload directives.
 
-In browser developer tools:
+Review the HSTS scope before using a registrable-domain root. `includeSubDomains` is appropriate only when every subordinate hostname is permanently HTTPS-ready. A header alone does not submit a domain to a browser preload list.
 
-1. Open **Network**, enable “Disable cache,” and reload.
-2. Confirm every script, style, font, image, fetch, and WebSocket belongs to the application's own origin, except WebRTC's non-HTTP STUN traffic.
-3. Search requests and page source for `beacon.min.js`, `cloudflareinsights.com`, `/cdn-cgi/rum`, analytics, and tag managers.
-4. Inspect **Application** → **Service Workers**. Exactly one same-origin `/integrity-worker.js` registration with `/` scope is expected. Any other registration is a failure, and startup preflight should reject it.
-5. On a clean profile, confirm the first installation automatically reloads once and that the next page runs under the `/integrity-worker.js` controller. A page that continues without Service Worker control is a failure.
-6. Inspect Cache Storage. Exactly one current `quietwire-pinned-shell-<shell-digest>` cache should contain only `integrity-manifest.json` and the manifest-listed public HTML/JavaScript/CSS shell, including the stamped `/integrity-worker.js`—not `/api` responses, keys, contacts, or messages. Build updates use different cache names and activation removes older QuietWire build caches. There should be no analytics cookies/local-storage records.
-7. Check the Console for CSP violations. Investigate them; do not weaken the CSP merely to silence an unexpected request.
+## Hosts without configurable response headers
 
-The initial document, hashed Vite asset filenames, integrity manifest, and integrity worker are expected. Network requests for those files pass through the Worker unless satisfied by the controlling integrity Service Worker's local pinned cache. During a room session, the application opens a same-origin `wss://…/api/signal/…` WebSocket. Chat payloads should not appear as HTTP/fetch requests.
+The browser integrity Service Worker serves the verified cached application with the mandatory CSP and isolation headers. The startup order is deliberate:
 
-Run the first-visit injection check in a clean disposable browser profile. A previously installed integrity worker can legitimately serve its pinned shell instead of a newly altered edge response.
+1. on an uncontrolled first navigation, only the resource-integrity step runs;
+2. the expected application-path Service Worker installs after verifying every manifest asset;
+3. the app performs one guarded reload;
+4. the controlled navigation receives the Service Worker's security headers;
+5. secure-context and cross-origin-isolation checks run and must pass before identity unlock.
 
-### 4. Compare the integrity build digest
+This makes a basic HTTPS static service—including a project subpath—usable without an application backend or provider-specific header feature. It does **not** secure the first response against its own host. The first shell and later Service Worker update response remain trust-on-first-use boundaries. Prefer native response headers when available and always compare the independent build digest.
 
-Startup preflight installs/verifies the build-stamped integrity Service Worker and displays the complete SHA-256 build digest covering its pinned asset map, including `/integrity-worker.js`, in both unpadded Base64URL and lowercase hexadecimal. Developer JSON exposes both encodings, and the UI provides a console command that asks the controlling worker to recompute the digest from its pinned manifest/cache before printing and returning both forms.
+## GitHub Pages
 
-For the exact deployed commit:
+KageTamga can run as an origin-root user site or a project site. Configure Pages to publish the generated `dist/` directory through your chosen build workflow. The relative Vite asset paths, application-path Service Worker scope, scope-relative manifest fetching, and `.nojekyll` marker support project paths such as:
 
-1. open the repository's main source page through a separate trusted view and read either encoding from the static digest card at the top of its README;
-2. optionally confirm the same value in the successful GitHub Actions log/job summary, or download the artifact whose name is the 64-character lowercase hexadecimal build digest and inspect its existing `integrity-manifest.json` file;
-3. compare every character of the same encoding with the value reported by the application through a separate trusted view; and
-4. investigate any mismatch before creating or unlocking an identity.
+`https://OWNER.github.io/KageTamga/`
 
-GitHub also displays a separate SHA-256 artifact digest after upload. That value verifies the downloadable ZIP produced by GitHub; it is not QuietWire's canonical pinned-shell build digest. The main source page's embedded README SVG, artifact name, Actions summary, manifest, application UI, developer JSON, and copied console command all refer to the latter. `npm run build` regenerates the static, same-repository `docs/build-digest.svg` README embed, and CI rejects a stale checked-in embed. No external badge or script is used.
+Do not publish the repository root directly: the integrity manifest and stamped Service Worker exist only after `npm run build`. Pages does not provide the app with signaling; participants still exchange the first encrypted offer/answer codes manually and then use trusted-peer introductions.
 
-This is a trust-on-first-use consistency check, not an origin-independent signature. Stamping and manifest coverage detect an inconsistent worker/build pair, and first install reloads through the controller, but the initial page executes before control exists and every worker/update response still comes from the same origin. A compromised GitHub/build chain also defeats the comparison.
+## Other static hosts
 
-### 5. Verify signaling is opaque
+The same `dist/` directory works on object storage, static-site platforms, a conventional HTTPS web server, a local appliance, or another immutable file host. Provider-specific caching and script-injection features must be disabled. If a host changes generated bytes after upload, digest verification fails closed.
 
-Using disposable test identities, connect two separate browser profiles. In the WebSocket inspector, application signaling frames should contain only routing/envelope fields such as a target peer ID, nonce, and ciphertext. SDP strings, ICE candidates, public keys, display names, and messages must not appear in plaintext in those frames.
+For a conventional server, configure the application directory approximately as follows:
 
-Cloudflare still sees client IP addresses at the connection layer; encryption cannot hide them from the network provider.
+- exact static-file lookup for `assets/*`, `integrity-worker.js`, and `integrity-manifest.json`;
+- directory index `index.html` at the application scope;
+- the security headers listed in `public/_headers` on every response;
+- no fallback from missing scripts/styles/workers to HTML;
+- no response-body transformation;
+- HTTPS redirect before application delivery.
 
-### 6. Inspect developer JSON boundaries
+## Release digest
 
-Enable **Developer JSON** and inspect the application, room, peer, and individual-message metadata panels. Expected metadata includes both build-digest encodings, secure-context capabilities, room/peer/message IDs, fingerprints, route/trust state, algorithms, recipient counts, and approximate ciphertext sizes. Those metadata panels must keep raw ciphertext redacted or absent.
-
-Then explicitly expand one message's nested **raw encrypted transport JSON**. It is expected to contain the signed delivery manifest and exact encrypted hybrid envelope, including recipient fingerprints, ciphertext, signatures, nonces, salts, and ML-KEM encapsulations. It is opt-in, per-message, and should remain collapsed by default. Neither this raw view nor the metadata panels may contain a passphrase, private key, room secret, or message plaintext.
-
-The panels are local and do not send this data, but displayed identifiers, exact recipient sets, signed trust state, and size/timing-adjacent values are still metadata; the raw view also discloses the encrypted packet itself. Do not publish screenshots or copies without reviewing them.
-
-## Direct-only networking
-
-This version uses Cloudflare STUN for ICE address discovery and sets `iceTransportPolicy: "all"`, but configures no TURN server. In practice:
-
-- compatible NAT/firewall pairs connect directly;
-- each peer can normally learn the other peer's public IP/network information;
-- restrictive networks may fail to connect; and
-- the UI should show the connection as direct, connecting, or offline. A relay status is reserved for a future explicitly configured TURN path.
-
-Networks must allow the browser's WebRTC traffic and access to `stun.cloudflare.com` on the configured STUN ports. Do not advertise IP anonymity.
-
-TURN is intentionally omitted from the out-of-box deployment. A public credential-minting endpoint can be abused, relay traffic changes the metadata/cost model, and adding a third party changes the threat model. A future relay feature should use short-lived credentials, explicit direct/auto/relay user choices, abuse controls, a clear provider disclosure, and tests that never expose long-lived TURN secrets to the client.
-
-The in-room **ignore peer** action is also direct/local-only. It closes that tab's P2P connection and suppresses the asserted fingerprint for that room session, but it is not a persistent or server-side block, does not revoke the capability link, and does not stop the peer from connecting to others. Do not describe it as moderation infrastructure.
-
-## Local development
-
-Use the Wrangler-based development command so the Static Assets rules, API Worker, Durable Object, integrity manifest, and Service Worker are all present:
+After a build:
 
 ```bash
-npm ci
-npm run dev
+node scripts/print-integrity-digest.mjs
 ```
 
-The command builds first and then starts Wrangler. Running Vite alone is insufficient: the global Worker redirect/header path, `/api/health`, Durable Object signaling, and the integrity shell contract would not match production.
+This prints both forms of the same 32-byte SHA-256 build digest:
 
-The exact `localhost` origin is considered a secure context by browsers, even if the local URL is HTTP. Testing on a LAN IP over plain HTTP is **not** equivalent; use an HTTPS tunnel you trust or a preview deployment.
+- lowercase 64-character hexadecimal, used as the CI artifact name;
+- unpadded 43-character Base64URL, used by the browser manifest.
 
-For a realistic test:
+`docs/build-digest.svg` embeds both forms on the repository's main README. The uploaded CI artifact is a ZIP transport; its platform-provided archive checksum is distinct from KageTamga's canonical build digest unless the interface explicitly says otherwise. Download the manifest file from the hex-named artifact and compare its `buildDigest` after independently checking the repository state.
 
-1. use two browser profiles or two devices;
-2. create disposable identities in each;
-3. create a room in one profile and transfer the complete fragment link directly;
-4. compare full fingerprints separately and verify only one direction at first;
-5. confirm the verifying sender can send to that peer, while the included recipient can decrypt but sees the unverified sender's message in red;
-6. add a third profile, confirm a sender encrypts only to that sender's locally verified recipients, and confirm an excluded peer sees an authenticated not-shared notice rather than plaintext;
-7. inspect signed trust announcements and delivery recipient lists, and confirm an announcement never grants reverse or transitive local trust;
-8. confirm the developer metadata panels remain redacted, then opt in to one nested raw encrypted transport view and confirm it contains ciphertext but no plaintext/secrets;
-9. ignore a disposable peer, confirm its local P2P connection closes and later communication is suppressed in that room session, and do not mistake this for a server block;
-10. locally lock signaling after the intended peers connect, confirm their existing chat continues, and confirm that the locked tab cannot accept a new peer;
-11. restore a disposable `.quietwire.json` backup and confirm both OpenPGP and exact ML-KEM-768 identity values match; confirm a raw OpenPGP import creates a new required ML-KEM key rather than a classical-only mode; and
-12. test conversation purge, identity deletion, and full local purge in both profiles. Identity deletion must remove locally signed contacts but leave ciphertext history; full purge must also remove the integrity cache and Service Worker.
+## Post-deployment verification
 
-## Updating and rollback
+Use a fresh browser profile so an older Service Worker or cache cannot hide deployment errors.
 
-Before every deploy:
+1. Open the final HTTPS application URL.
+2. Expect exactly one first-use reload.
+3. Confirm that every required startup check passes before the Continue button enables.
+4. In developer tools, verify that `integrity-worker.js` controls exactly the application path and no waiting worker exists.
+5. Run the complete browser-console verification command from the README.
+6. Compare either full digest with the static card on a separately opened repository source page.
+7. Inspect the loaded document, scripts, styles, workers, and network requests. There should be no remote runtime asset or analytics request.
+8. Confirm `window.isSecureContext === true` and `window.crossOriginIsolated === true` after the guarded reload.
+9. Check that a missing/unpinned script or style is not rewritten to `index.html`.
+10. Open two separate browser profiles, create a disposable room, exchange manual codes, compare fingerprints, verify both directions, and send/decrypt messages.
+11. Add a third profile. Verify that a dual-signed introduction succeeds only where both the direct relayer and introduced origin fingerprint were already trusted independently by that receiver.
+12. In a disposable build, test an untrusted relayer, an untrusted introduced origin, and a signature-tampered relay. All must be dropped, with red errors identifying the denied fingerprint when known.
 
-```bash
-npm ci
-npm run check
-npm audit
-```
+## Updates and rollback
 
-Review changes to `package-lock.json`, cryptographic dependencies, `worker/index.ts`, `wrangler.jsonc`, `public/_headers`, `public/integrity-worker.js`, the manifest/build-verification scripts, backup/storage code, developer JSON allowlists, and protocol version labels. An automated audit result is only one signal; it is not a security review.
+Each build has a distinct cache name and stamped worker. A newly downloaded Service Worker may remain `waiting` while older tabs use the previous build. The preflight gate rejects a waiting update. Close all application tabs, reopen, and compare the new digest before unlocking an identity.
 
-The checked-in CI workflow pins third-party GitHub Actions to full commit SHAs. Keep them pinned, review any SHA update against the intended upstream release, and do not replace the build verifier with a step that merely trusts or prints manifest-provided digests.
+Rollback means republishing one complete, internally matching `dist/` release. Never mix an old worker, new manifest, and assets from different builds. A rollback cannot undo plaintext already exposed by malicious code or delete peer-held copies. After suspected code-delivery compromise, publish from a clean environment, rotate source/hosting credentials, compare a new digest independently, and advise identity replacement when key exposure is plausible.
 
-Use Cloudflare Worker Versions/Deployments to roll back a bad static/Worker release. Test Service Worker upgrade/rollback behavior in a disposable profile: every shell produces a differently stamped worker and build-specific cache, an installed worker may keep serving its pinned shell, and an update can remain waiting until all tabs close. Preflight should reject a waiting update, and activation should delete older QuietWire build caches. A rollback cannot undo plaintext already exposed by malicious client code and cannot delete copies held by peers. After a suspected code-delivery compromise, rotate the Cloudflare/GitHub credentials, investigate the build chain, publish a clean version, compare the new independent digest, and advise users to replace and re-verify identities when key exposure is plausible.
+## ICE operation
+
+The default UI contains public STUN URLs for address discovery. Operators of those endpoints can observe client address and timing metadata. Users can edit the list before entering a room, supply their own TURN server and credentials, or leave it empty for host candidates only.
+
+TURN is not an application backend and does not perform member discovery or signaling. It relays encrypted WebRTC packets when direct connectivity fails, but its operator can observe endpoints, timing, sizes, and traffic volume. TURN credentials exist only in tab memory and are not included in backups or developer JSON.
+
+## Logging and privacy
+
+Even a static host normally processes source IPs, requested asset paths, user agents, timing, and abuse/security metadata. KageTamga sends no room capability, identity, public key, signaling code, chat envelope, or chat plaintext to the static host in its intended flow. The host can nevertheless replace the application code and thereby steal future values, which is why first-use delivery remains explicitly trusted.
+
+Disable optional access logs where operationally appropriate, minimize retention, do not add request-body collectors or browser telemetry, and document the static host's own data policy. A fork that adds remote scripts, analytics, hosted signaling, mandatory TURN, logging, or persistence changes this threat model and must say so prominently.

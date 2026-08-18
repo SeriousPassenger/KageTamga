@@ -766,7 +766,7 @@ function secretProtectionAad(): OwnedBytes {
 
 /** Length-prefix every field to make domain separation unambiguous. */
 function contextBytes(purpose: string, ...fields: string[]): OwnedBytes {
-  const values = ["quietwire-hybrid-crypto", "v1", HYBRID_ALGORITHM, purpose, ...fields];
+  const values = ["kagetamga-hybrid-crypto", "v1", HYBRID_ALGORITHM, purpose, ...fields];
   return ownedBytes(utf8(values.map((value) => `${utf8(value).byteLength}:${value}`).join("|")));
 }
 

@@ -5,7 +5,7 @@ const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const productionPackages = Object.entries(lock.packages)
   .filter(([path, metadata]) => path.startsWith("node_modules/") && !metadata.dev)
   .sort(([left], [right]) => left.localeCompare(right));
-const quietWireLicense = (await readFile("LICENSE", "utf8")).trim();
+const kageTamgaLicense = (await readFile("LICENSE", "utf8")).trim();
 
 const sections = [];
 for (const [path, metadata] of productionPackages) {
@@ -41,16 +41,16 @@ await mkdir("dist", { recursive: true });
 await writeFile(
   "dist/THIRD_PARTY_LICENSES.txt",
   [
-    "QuietWire third-party software notices",
+    "KageTamga third-party software notices",
     "Generated from the exact production dependency graph in package-lock.json.",
     "The application's own MIT License text is included first.",
     "",
     "=".repeat(78),
-    "QuietWire 0.1.0",
+    "KageTamga 0.1.0",
     "Declared license: MIT",
-    "Source: https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat",
+    "Source: https://github.com/SeriousPassenger/KageTamga",
     "-".repeat(78),
-    quietWireLicense,
+    kageTamgaLicense,
     "",
     ...sections,
     "",

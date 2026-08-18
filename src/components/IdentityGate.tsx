@@ -1,7 +1,7 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import QRCode from "qrcode";
 import type { StoredIdentity } from "../lib/db";
-import { purgeIdentity, saveIdentity } from "../lib/db";
+import { purgeIdentity, saveIdentityWithContacts } from "../lib/db";
 import {
   downloadText,
   exportIdentityBackup,
@@ -9,6 +9,7 @@ import {
   groupedFingerprint,
   importIdentity,
   importIdentityBackup,
+  safeBackupBaseName,
   unlockIdentity,
   type IdentityBundle,
   type UnlockedIdentity,
@@ -121,7 +122,7 @@ export function IdentityGate({
   async function loadImportFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
+    if (file.size > 4 * 1024 * 1024) {
       setError(t("importFailed"));
       return;
     }
@@ -137,7 +138,8 @@ export function IdentityGate({
       const imported = await importIdentityBackup(await file.text(), backupPassphrase);
       const matches =
         imported.stored.fingerprint === pendingBundle.stored.fingerprint &&
-        imported.stored.hybridPublicKey === pendingBundle.stored.hybridPublicKey;
+        imported.stored.hybridPublicKey === pendingBundle.stored.hybridPublicKey &&
+        JSON.stringify(imported.contacts) === JSON.stringify(pendingBundle.contacts);
       imported.unlocked.hybridSecretKey.fill(0);
       if (!matches) throw new Error(t("backupFailed"));
       setBackupVerified(true);
@@ -148,10 +150,6 @@ export function IdentityGate({
       setBusy(false);
       event.target.value = "";
     }
-  }
-
-  function safeName(value: string): string {
-    return value.normalize("NFKD").replace(/[^A-Za-z0-9_-]+/gu, "-").replace(/^-|-$/gu, "") || "identity";
   }
 
   async function removeIdentity() {
@@ -165,7 +163,7 @@ export function IdentityGate({
     setBusy(true);
     setError(undefined);
     try {
-      await saveIdentity(pendingBundle.stored);
+      await saveIdentityWithContacts(pendingBundle.stored, pendingBundle.contacts);
       onUnlocked(pendingBundle.stored, pendingBundle.unlocked);
     } catch {
       setError(t("operationFailed"));
@@ -174,9 +172,29 @@ export function IdentityGate({
     }
   }
 
+  async function downloadPendingBackup(filename: string) {
+    if (!pendingBundle) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      downloadText(
+        `${filename}.kagetamga.json`,
+        await exportIdentityBackup(
+          pendingBundle.stored,
+          pendingBundle.unlocked,
+          pendingBundle.contacts,
+        ),
+      );
+    } catch {
+      setError(t("backupFailed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (pendingBundle) {
     const stored = pendingBundle.stored;
-    const filename = safeName(stored.displayName);
+    const filename = safeBackupBaseName(stored.displayName);
     return (
       <main className="gate-shell">
         <section className="panel wide-panel">
@@ -194,7 +212,7 @@ export function IdentityGate({
               <button
                 className="button primary"
                 type="button"
-                onClick={() => downloadText(`${filename}.quietwire.json`, exportIdentityBackup(stored))}
+                onClick={() => void downloadPendingBackup(filename)}
               >
                 {t("downloadIdentityBackup")} (.json)
               </button>
@@ -340,7 +358,7 @@ export function IdentityGate({
           {mode === "import" && (
             <>
               <label className="file-button">
-                {t("privateKeyFile")} / QuietWire backup
+                {t("privateKeyFile")} / KageTamga backup
                 <input type="file" accept=".asc,.pgp,.json,text/plain,application/json" onChange={(event) => void loadImportFile(event)} />
               </label>
               <label>

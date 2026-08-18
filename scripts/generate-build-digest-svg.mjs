@@ -4,11 +4,11 @@ import { readIntegrityBuildDigest } from "./integrity-digest.mjs";
 const digest = await readIntegrityBuildDigest();
 const outputUrl = new URL("../docs/build-digest.svg", import.meta.url);
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="226" viewBox="0 0 1100 226" role="img" aria-labelledby="title description">
-  <title id="title">Current QuietWire build digest</title>
+  <title id="title">Current KageTamga build digest</title>
   <desc id="description">SHA-256 build digest in lowercase hexadecimal and unpadded Base64URL encodings.</desc>
   <rect width="1100" height="226" rx="18" fill="#0d1712"/>
   <rect x="1" y="1" width="1098" height="224" rx="17" fill="none" stroke="#3a654d" stroke-width="2"/>
-  <text x="32" y="43" fill="#f3fff7" font-family="system-ui, sans-serif" font-size="25" font-weight="700">Current QuietWire build digest · SHA-256</text>
+  <text x="32" y="43" fill="#f3fff7" font-family="system-ui, sans-serif" font-size="25" font-weight="700">Current KageTamga build digest · SHA-256</text>
   <text x="32" y="78" fill="#8ec7a5" font-family="system-ui, sans-serif" font-size="14" font-weight="700">LOWERCASE HEX · ARTIFACT NAME</text>
   <text x="32" y="106" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">${digest.hex}</text>
   <text x="32" y="145" fill="#8ec7a5" font-family="system-ui, sans-serif" font-size="14" font-weight="700">BASE64URL · UNPADDED</text>

@@ -8,7 +8,7 @@ import {
 import { assertSupportedOpenPgpKey } from "./pgp-policy";
 
 const VERSION = 1 as const;
-const SIGNATURE_DOMAIN = "quietwire-room-event:v1";
+const SIGNATURE_DOMAIN = "kagetamga-room-event:v1";
 const TRUST_MAX_CLOCK_SKEW_MS = 10 * 60 * 1000;
 const MAX_SIGNATURE_CHARACTERS = 20_000;
 const MAX_PUBLIC_KEY_CHARACTERS = 100_000;

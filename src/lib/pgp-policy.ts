@@ -15,7 +15,7 @@ function isSupportedEncryptionAlgorithm(info: AlgorithmInfo): boolean {
 }
 
 /**
- * QuietWire deliberately accepts only Curve25519 OpenPGP identities. This
+ * KageTamga deliberately accepts only Curve25519 OpenPGP identities. This
  * keeps the security label accurate and prevents an imported legacy key from
  * silently weakening the signature or encryption layer.
  */

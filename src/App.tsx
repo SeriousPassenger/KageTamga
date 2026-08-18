@@ -3,8 +3,14 @@ import { ChatRoom } from "./components/ChatRoom";
 import { IdentityGate } from "./components/IdentityGate";
 import { PreflightGate } from "./components/PreflightGate";
 import { RoomLobby } from "./components/RoomLobby";
-import { getIdentity, purgeEverything, type StoredIdentity } from "./lib/db";
-import type { UnlockedIdentity } from "./lib/identity";
+import { getIdentity, listContacts, purgeEverything, type StoredIdentity } from "./lib/db";
+import {
+  downloadText,
+  exportIdentityBackup,
+  safeBackupBaseName,
+  type UnlockedIdentity,
+} from "./lib/identity";
+import { DEFAULT_ICE_SETTINGS, iceServersFromSettings, type IceSettings } from "./lib/ice-config";
 import {
   createTranslator,
   detectLocale,
@@ -14,7 +20,6 @@ import {
   type Locale,
 } from "./lib/i18n";
 import { sha256DigestEncodings } from "./lib/integrity-digest";
-import { roomSecretFromHash } from "./lib/room";
 import { verifyIntegrityWorker } from "./lib/preflight";
 
 export default function App() {
@@ -24,8 +29,13 @@ export default function App() {
   const [identity, setIdentity] = useState<StoredIdentity>();
   const [unlocked, setUnlocked] = useState<UnlockedIdentity>();
   const [roomSecret, setRoomSecret] = useState<string>();
+  const [iceSettings, setIceSettings] = useState<IceSettings>(DEFAULT_ICE_SETTINGS);
+  const [activeIceServers, setActiveIceServers] = useState<RTCIceServer[]>(() =>
+    iceServersFromSettings(DEFAULT_ICE_SETTINGS));
   const [developerMode, setDeveloperMode] = useState(false);
   const [buildDigest, setBuildDigest] = useState<string>();
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupError, setBackupError] = useState(false);
   const t = useMemo(() => createTranslator(locale), [locale]);
   const buildDigestEncodings = useMemo(
     () => buildDigest ? sha256DigestEncodings(buildDigest) : undefined,
@@ -44,12 +54,6 @@ export default function App() {
       .then(setIdentity)
       .finally(() => setLoadingIdentity(false));
   }, [preflightPassed]);
-
-  useEffect(() => {
-    if (!unlocked || roomSecret) return;
-    const fromHash = roomSecretFromHash(location.hash);
-    if (fromHash) setRoomSecret(fromHash);
-  }, [roomSecret, unlocked]);
 
   useEffect(
     () => () => {
@@ -92,6 +96,25 @@ export default function App() {
     location.reload();
   }
 
+  function enterRoom(secret: string, iceServers: RTCIceServer[]) {
+    setActiveIceServers(iceServers);
+    setRoomSecret(secret);
+  }
+
+  async function downloadBackup() {
+    if (!identity || !unlocked || backupBusy) return;
+    setBackupBusy(true);
+    setBackupError(false);
+    try {
+      const contents = await exportIdentityBackup(identity, unlocked, await listContacts());
+      downloadText(`${safeBackupBaseName(identity.displayName)}.kagetamga.json`, contents);
+    } catch {
+      setBackupError(true);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
   return (
     <div className="app-frame">
       <header className="site-header">
@@ -103,7 +126,7 @@ export default function App() {
           }}
           aria-label={t("appName")}
         >
-          <span className="brand-mark" aria-hidden="true">Q</span>
+          <span className="brand-mark" aria-hidden="true">K</span>
           <span>
             <strong>{t("appName")}</strong>
             <small>browser-to-browser</small>
@@ -118,6 +141,16 @@ export default function App() {
             ))}
           </select>
         </label>
+        {identity && unlocked && (
+          <button
+            className="button secondary header-backup"
+            type="button"
+            disabled={backupBusy}
+            onClick={() => void downloadBackup()}
+          >
+            {backupBusy ? t("loading") : t("downloadIdentityBackup")}
+          </button>
+        )}
         <label className="developer-toggle">
           <input
             type="checkbox"
@@ -152,6 +185,7 @@ export default function App() {
           identity={identity}
           unlocked={unlocked}
           roomSecret={roomSecret}
+          iceServers={activeIceServers}
           developerMode={developerMode}
           onLeave={leaveRoom}
           onLockIdentity={lockIdentity}
@@ -160,17 +194,23 @@ export default function App() {
         <RoomLobby
           t={t}
           identity={identity}
-          onJoin={setRoomSecret}
+          unlocked={unlocked}
+          iceSettings={iceSettings}
+          onIceSettingsChange={setIceSettings}
+          onJoin={enterRoom}
+          onDownloadBackup={downloadBackup}
           onLock={lockIdentity}
           onPurgeEverything={purgeAll}
         />
       )}
 
+      {backupError && <div className="alert danger global-alert">{t("backupFailed")}</div>}
+
       {developerMode && (
         <details className="debug-panel app-debug">
           <summary>{t("debugApp")} · {t("debugRedacted")}</summary>
           <pre>{JSON.stringify({
-            app: { name: "QuietWire", version: "0.1.0", protocolVersion: 1, locale },
+            app: { name: "KageTamga", version: "0.1.0", protocolVersion: 1, locale },
             build: {
               digestAlgorithm: "SHA-256",
               digestBase64Url: buildDigestEncodings?.base64Url ?? null,
@@ -185,7 +225,9 @@ export default function App() {
               webRtc: Boolean(globalThis.RTCPeerConnection),
             },
             privacy: {
+              applicationBackend: "none",
               serverMessageStorage: "none",
+              participantDiscovery: "manual encrypted offer/answer; persistent-trust-gated peer introductions",
               runtimeThirdPartyScripts: "blocked by CSP and build verification",
               browserStorage: "origin-scoped IndexedDB; encrypted key and message records",
               redactedFields: ["passphrase", "private keys", "room secret", "message plaintext"],
@@ -199,7 +241,7 @@ export default function App() {
 
       <footer className="site-footer">
         <span>{t("noAnalytics")}</span>
-        <a href="https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat" target="_blank" rel="noopener noreferrer">
+        <a href="https://github.com/SeriousPassenger/KageTamga" target="_blank" rel="noopener noreferrer">
           Source ↗
         </a>
         <span>MIT · 2026 SeriousPassenger</span>

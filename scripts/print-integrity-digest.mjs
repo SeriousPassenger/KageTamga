@@ -3,9 +3,9 @@ import { readIntegrityBuildDigest } from "./integrity-digest.mjs";
 
 const digest = await readIntegrityBuildDigest();
 
-console.log(`QuietWire build digest (SHA-256, Base64URL unpadded): ${digest.base64Url}`);
-console.log(`QuietWire build digest (SHA-256, lowercase hex): ${digest.hex}`);
-console.log(`QuietWire integrity artifact name: ${digest.hex}`);
+console.log(`KageTamga build digest (SHA-256, Base64URL unpadded): ${digest.base64Url}`);
+console.log(`KageTamga build digest (SHA-256, lowercase hex): ${digest.hex}`);
+console.log(`KageTamga integrity artifact name: ${digest.hex}`);
 
 if (process.env.GITHUB_OUTPUT) {
   await appendFile(
@@ -19,7 +19,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
   await appendFile(
     process.env.GITHUB_STEP_SUMMARY,
     [
-      "## QuietWire build digest",
+      "## KageTamga build digest",
       "",
       "| Encoding | Value |",
       "| --- | --- |",
@@ -27,7 +27,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
       `| SHA-256 · lowercase hex | \`${digest.hex}\` |`,
       `| Artifact name | \`${digest.hex}\` |`,
       "",
-      "> GitHub's separate artifact digest hashes the downloadable ZIP. The values above hash QuietWire's canonical pinned-shell asset map.",
+      "> GitHub's separate artifact digest hashes the downloadable ZIP. The values above hash KageTamga's canonical pinned-shell asset map.",
       "",
     ].join("\n"),
     "utf8",

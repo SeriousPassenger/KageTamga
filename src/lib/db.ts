@@ -25,6 +25,7 @@ export interface StoredMessage {
 }
 
 export interface StoredContact {
+  version: 1;
   name: string;
   fingerprint: string;
   publicKeyArmored: string;
@@ -33,7 +34,7 @@ export interface StoredContact {
   signature: string;
 }
 
-const DATABASE_NAME = "quietwire-private-data";
+const DATABASE_NAME = "kagetamga-private-data";
 const DATABASE_VERSION = 1;
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -85,6 +86,23 @@ export async function saveIdentity(identity: StoredIdentity): Promise<void> {
   try {
     const transaction = db.transaction("identity", "readwrite");
     transaction.objectStore("identity").put(identity);
+    await transactionDone(transaction);
+  } finally {
+    db.close();
+  }
+}
+
+export async function saveIdentityWithContacts(
+  identity: StoredIdentity,
+  contacts: readonly StoredContact[],
+): Promise<void> {
+  const db = await database();
+  try {
+    const transaction = db.transaction(["identity", "contacts"], "readwrite");
+    transaction.objectStore("identity").put(identity);
+    const contactStore = transaction.objectStore("contacts");
+    contactStore.clear();
+    for (const contact of contacts) contactStore.put(contact);
     await transactionDone(transaction);
   } finally {
     db.close();
@@ -163,11 +181,49 @@ export async function getContact(name: string): Promise<StoredContact | undefine
   }
 }
 
+export async function listContacts(): Promise<StoredContact[]> {
+  const db = await database();
+  try {
+    const contacts = await requestResult(
+      db.transaction("contacts", "readonly").objectStore("contacts").getAll(),
+    );
+    return contacts.sort((left, right) => left.name.localeCompare(right.name));
+  } finally {
+    db.close();
+  }
+}
+
+export async function listContactsForFingerprint(fingerprint: string): Promise<StoredContact[]> {
+  const db = await database();
+  try {
+    const contacts = await requestResult(
+      db.transaction("contacts", "readonly").objectStore("contacts").getAll(),
+    );
+    const normalizedFingerprint = fingerprint.toUpperCase();
+    return contacts
+      .filter((contact) => contact.fingerprint.toUpperCase() === normalizedFingerprint)
+      .sort((left, right) => right.verifiedAt.localeCompare(left.verifiedAt));
+  } finally {
+    db.close();
+  }
+}
+
 export async function saveContact(contact: StoredContact): Promise<void> {
   const db = await database();
   try {
     const transaction = db.transaction("contacts", "readwrite");
     transaction.objectStore("contacts").put(contact);
+    await transactionDone(transaction);
+  } finally {
+    db.close();
+  }
+}
+
+export async function deleteContact(name: string): Promise<void> {
+  const db = await database();
+  try {
+    const transaction = db.transaction("contacts", "readwrite");
+    transaction.objectStore("contacts").delete(name);
     await transactionDone(transaction);
   } finally {
     db.close();

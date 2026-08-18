@@ -32,16 +32,19 @@ describe("integrity digest encodings", () => {
     }
 
     const worker = {
-      scriptURL: "https://quietwire.example/integrity-worker.js",
+      scriptURL: "https://kagetamga.example/integrity-worker.js",
       postMessage: (_message: unknown, ports: Array<{ postMessage(data: unknown): void }>) => {
         ports[0]?.postMessage({ ok: true, buildDigest: EMPTY_SHA256_BASE64URL });
       },
     };
-    vi.stubGlobal("location", { origin: "https://quietwire.example" });
+    vi.stubGlobal("location", {
+      href: "https://kagetamga.example/",
+      origin: "https://kagetamga.example",
+    });
     vi.stubGlobal("navigator", {
       serviceWorker: {
         controller: worker,
-        ready: Promise.resolve({ waiting: null }),
+        ready: Promise.resolve({ scope: "https://kagetamga.example/", waiting: null }),
       },
     });
     vi.stubGlobal("MessageChannel", TestMessageChannel);
@@ -58,11 +61,11 @@ describe("integrity digest encodings", () => {
         hex: EMPTY_SHA256_HEX,
       });
       expect(log).toHaveBeenCalledWith(
-        "QuietWire build digest (SHA-256, Base64URL unpadded):",
+        "KageTamga build digest (SHA-256, Base64URL unpadded):",
         EMPTY_SHA256_BASE64URL,
       );
       expect(log).toHaveBeenCalledWith(
-        "QuietWire build digest (SHA-256, lowercase hex):",
+        "KageTamga build digest (SHA-256, lowercase hex):",
         EMPTY_SHA256_HEX,
       );
     } finally {

@@ -14,7 +14,19 @@ describe("integrityWorkerRegistrationUrl", () => {
       "https://chat.example/integrity-worker.js",
     );
     expect(() => integrityWorkerRegistrationUrl("https://attacker.example/worker.js")).toThrow(
-      "Only the same-origin QuietWire integrity worker may be registered.",
+      "Only the same-origin KageTamga integrity worker may be registered.",
+    );
+  });
+
+  it("pins the worker to the current static application subpath", async () => {
+    vi.stubGlobal("location", new URL("https://pages.example/projects/KageTamga/"));
+    const { integrityWorkerRegistrationUrl } = await import("./trusted-types");
+
+    expect(integrityWorkerRegistrationUrl("./integrity-worker.js")).toBe(
+      "https://pages.example/projects/KageTamga/integrity-worker.js",
+    );
+    expect(() => integrityWorkerRegistrationUrl("/integrity-worker.js")).toThrow(
+      "Only the same-origin KageTamga integrity worker may be registered.",
     );
   });
 
@@ -24,7 +36,7 @@ describe("integrityWorkerRegistrationUrl", () => {
     const trustedUrl = { kind: "TrustedScriptURL" };
     const createPolicy = vi.fn(
       (name: string, rules: { createScriptURL(input: string): string }) => {
-        expect(name).toBe("quietwire");
+        expect(name).toBe("kagetamga");
         policyRules = rules;
         return {
           createScriptURL(input: string) {
@@ -43,7 +55,7 @@ describe("integrityWorkerRegistrationUrl", () => {
     expect(integrityWorkerRegistrationUrl("/integrity-worker.js")).toBe(trustedUrl);
     expect(createPolicy).toHaveBeenCalledTimes(1);
     expect(() => policyRules?.createScriptURL("/another-worker.js")).toThrow(
-      "Only the same-origin QuietWire integrity worker may be registered.",
+      "Only the same-origin KageTamga integrity worker may be registered.",
     );
   });
 });
