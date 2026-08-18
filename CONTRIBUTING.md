@@ -1,6 +1,6 @@
 # Contributing
 
-Contributions are welcome, especially security review, tests, accessibility improvements, and corrections to translations or documentation. QuietWire is security-sensitive: a small UI, storage, or dependency change can silently weaken its promises.
+Contributions are welcome, especially security review, tests, accessibility improvements, and corrections to translations or documentation. KageTamga is security-sensitive: a small UI, storage, or dependency change can silently weaken its promises.
 
 ## Before opening a pull request
 
@@ -22,9 +22,9 @@ A normal contribution must not add:
 - analytics, telemetry, browser RUM, advertising, fingerprints, or trackers;
 - third-party runtime scripts, styles, fonts, images, CDNs, tag managers, or remote code;
 - plaintext logging of room URLs/IDs, peer IDs, SDP, ICE, identities, keys, passphrases, messages, or cryptographic errors containing sensitive values;
-- server-side messages, identity keys, contact graphs, or signaling-payload persistence;
-- D1, KV, R2, Queues, Analytics Engine, Logpush, crash reporting, or an external monitoring service;
-- additional/unreviewed Service Workers, caching of user or `/api` data, network fallback for executable resources, or application-shell caching outside the integrity manifest;
+- an application backend, hosted room discovery/signaling, server-side messages, identity keys, contact graphs, or signaling persistence;
+- remote storage, queues, hosted analytics, crash reporting, request-body inspection, or an external monitoring service;
+- additional/unreviewed Service Workers, caching of user or arbitrary network data, network fallback for executable resources, or application-shell caching outside the integrity manifest;
 - a weaker CSP, Permissions Policy, origin boundary, cache directive, or observability setting merely to make a feature easier; or
 - misleading claims of anonymity, audited security, quantum safety, forward secrecy, remote erasure, or identity authentication without fingerprint verification.
 
@@ -48,7 +48,7 @@ Pure-JavaScript post-quantum code does not provide strong constant-time guarante
 
 Generated and imported OpenPGP identities are deliberately restricted to v4, 40-hex fingerprints, Ed25519 signatures, and X25519 encryption; legacy OpenPGP Curve25519 encodings are accepted. Every usable peer and local identity must also have an exact, internally consistent ML-KEM-768 key. The combined profile hard-fails if either half is missing, malformed, mismatched, or uses another algorithm; do not add a classical-only or PQ downgrade path. Do not broaden the OpenPGP policy to RSA, P-curves, v6, revoked, expired, or invalid keys without changing the protocol/UI labels, fingerprint workflow, tests, migration plan, and threat model.
 
-The complete `.quietwire.json` backup is the one complete combined-identity recovery artifact and a versioned protocol surface. Changes to stored OpenPGP/ML-KEM fields, protection parameters, validation, import, or export require round-trip and wrong-key tests plus migration/recovery documentation. A raw OpenPGP `.asc` import intentionally creates a fresh required ML-KEM-768 key and must not be presented as a complete restore or classical-only operating mode.
+The complete `.kagetamga.json` backup is the one complete combined-identity and persistent-trust recovery artifact and a versioned protocol surface. Its identity/contact payload remains authenticated ciphertext under a key derived from the unlocked ML-KEM secret, while the ML-KEM secret remains passphrase protected. Changes to stored OpenPGP/ML-KEM/contact fields, protection parameters, validation, import, or export require round-trip, tamper, wrong-key, wrong-passphrase, and owner-signature tests plus migration/recovery documentation. A raw OpenPGP `.asc` import intentionally creates a fresh required ML-KEM-768 key and must not be presented as a complete restore or classical-only operating mode.
 
 Each message must use a fresh random AES-256 content key. There is no shared room key or join/leave group-key rotation. The sender's own locally verified contacts determine the exact recipients independently for every message. Preserve these trust and delivery invariants:
 
@@ -58,6 +58,17 @@ Each message must use a fresh random AES-256 content key. There is no shared roo
 - an excluded peer receives only the authenticated not-shared state and encrypted transport, never plaintext;
 - a recipient who can decrypt but has not locally verified the sender remains visibly untrusted; and
 - a local data-channel send is not represented as a delivery or read receipt.
+
+Peer-assisted WebRTC setup also preserves these invariants:
+
+- the newcomer signs its exact identity and every targeted offer/answer SDP;
+- every direct relayer signs a fresh room/target/hop/time/nonce-bound outer statement;
+- the receiving browser requires the direct relayer fingerprint in its own persistent owner-signed trust list before nested payload processing;
+- after signature verification, the receiving browser separately requires the embedded origin fingerprint in its own persistent owner-signed trust list;
+- an intermediate forward requires a locally trusted direct next hop;
+- unknown, unsigned, invalid, stale, replayed, wrong-target, or over-hop relays are dropped and visibly reported;
+- a denied known relayer fingerprint appears in a red chat security event; and
+- a valid introduction never grants chat or relay trust to the newcomer automatically.
 
 ## Frontend changes
 
@@ -86,12 +97,12 @@ Do not infer a user's identity or location from language choice. Language detect
 
 The one expected Service Worker is a trust-on-first-use shell-integrity control, not an offline application or an origin-independent signature system. Keep these properties:
 
-- only same-origin, manifest-listed HTML/JavaScript/CSS and the build-stamped `/integrity-worker.js` are pinned;
-- `/api` requests and user data are never cached;
-- unlisted document/script/style/worker requests fail closed after control;
+- only same-origin, manifest-listed HTML/JavaScript/CSS and the application-path build-stamped `integrity-worker.js` are pinned;
+- user data and arbitrary network responses are never cached;
+- every unlisted request within the controlled application path fails closed;
 - the build first stamps the integrity worker with the digest of that shell, then the manifest/build digest covers the stamped worker as well as the other canonical assets;
 - cache names are build-specific, stale build caches are removed on activation, and a first install forces a reload through the new controller before the app continues;
-- a foreign Service Worker registration fails preflight;
+- a foreign Service Worker capable of controlling the application path fails preflight;
 - full local purge deletes Cache Storage and unregisters Service Workers; and
 - documentation continues to disclose first-load and malicious-update limitations.
 
@@ -99,15 +110,17 @@ Changes to the manifest generator, `integrity-worker.js`, Cache Storage behavior
 
 Keep every third-party GitHub Action pinned to a reviewed full commit SHA. CI must recompute and compare every manifest-listed file digest, the non-worker `shellDigest`, the complete `buildDigest`, and the integrity worker's embedded stamp; uploading or printing the manifest alone is not integrity verification.
 
-## Cloudflare changes
+## Static delivery, manual signaling, and ICE
 
-Keep `observability.enabled` false and keep `assets.run_worker_first: true` globally. Every network asset request must pass through the Worker so the first HTTP visit is redirected and every Worker/static response receives the authoritative security headers. The integrity Service Worker's build-specific pinned cache minimizes repeat edge requests after it controls the page, but contributors must not claim that uncached static requests bypass Worker code. Durable Object changes must preserve ephemeral-only signaling and avoid `ctx.storage` calls.
+KageTamga has no application backend. Do not add a hosted Worker/function, WebSocket rendezvous, database, account, mailbox, room-presence endpoint, or implicit network discovery while describing the result as the same architecture. A proposal for hosted signaling requires a new protocol version, threat model, data-flow/retention disclosure, opt-in design, abuse plan, and maintainer decision.
 
-Keep the room capability 256-bit and in the URL fragment, the derived routing ID opaque, the WebSocket `Origin` check exact and same-origin, the eight-peer server/client room cap, the per-socket signaling rate limit, and the client unique-peer safety cap. These are bounded-resource controls, not user authentication or complete abuse protection. Preserve room-local ignore by fingerprint: it closes/suppresses that local P2P relationship for the session, but must not be described as a persistent/server-side block or invite revocation. Operators still need appropriate edge IP/rate controls.
+Keep the room capability 256-bit and in the URL fragment. Manual offer/answer codes remain room-key-encrypted, origin-signed, canonical, bounded, fresh, target-bound, replay-tracked, and tied to in-tab pending exchanges. The existing trusted-peer mesh may forward only the dual-signed protocol described above.
 
-The “lock signaling” action is local and one-way for the current tab/room session: it closes only that client's signaling WebSocket while established data channels continue. Do not describe it as a server room lock, invite revocation, or global admission control. If TURN support is proposed, it needs short-lived credentials, abuse/cost controls, provider disclosure, and explicit direct/auto/relay behavior; a long-lived TURN secret must never be shipped to the browser.
+Preserve the eight-peer active cap, cumulative-peer cap, pending-offer cap, buffer/message/control bounds, negotiation/ICE timeouts, replay-cache limits, and maximum relay hops. These contain local resources; they do not provide complete denial-of-service protection.
 
-After deployment, use [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) to check headers, Network activity, source injection, and opaque signaling frames.
+ICE URLs stay user-configurable before entering a room and tab-memory-only. STUN and TURN must never be described as signaling or member discovery. TURN credentials must not enter source, IndexedDB, backups, logs, debug JSON, or exported transport JSON. Any default endpoint change requires privacy/availability review and documentation of operator metadata exposure.
+
+The production build stays subpath-safe with relative assets and application-path Service Worker scope. Changes must be tested at both `/` and a project-style `/KageTamga/` path. After deployment, use [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) to check headers, MIME types, guarded reload, Service Worker scope, network activity, source injection, digest comparison, manual connection, and relay denial.
 
 ## License
 

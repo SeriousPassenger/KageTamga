@@ -1,6 +1,7 @@
 import * as openpgp from "openpgp";
 import type { PrivateKey } from "openpgp";
-import type { StoredIdentity } from "./db";
+import type { StoredContact, StoredIdentity } from "./db";
+import { decodeUtf8, fromBase64Url, toBase64Url, utf8 } from "./encoding";
 import {
   deriveHybridPublicKey,
   generateHybridKeyPair,
@@ -8,10 +9,12 @@ import {
   unprotectHybridSecretKey,
 } from "./hybrid-crypto";
 import { assertSupportedOpenPgpKey } from "./pgp-policy";
+import { verifyTrustedContact } from "./trust";
 
 export interface IdentityBundle {
   stored: StoredIdentity;
   unlocked: UnlockedIdentity;
+  contacts: StoredContact[];
 }
 
 export interface UnlockedIdentity {
@@ -61,6 +64,7 @@ export async function generateIdentity(
       protectedHybridSecretKey,
     },
     unlocked: { pgpPrivateKey, hybridSecretKey: hybrid.secretKey },
+    contacts: [],
   };
 }
 
@@ -104,6 +108,7 @@ export async function importIdentity(
       protectedHybridSecretKey,
     },
     unlocked: { pgpPrivateKey: unlockedKey, hybridSecretKey: hybrid.secretKey },
+    contacts: [],
   };
 }
 
@@ -142,19 +147,64 @@ export async function unlockIdentity(
   }
 }
 
-interface IdentityBackup {
-  format: "quietwire-identity-backup";
-  version: 1;
+interface EncryptedIdentityBackup {
+  format: "kagetamga-encrypted-backup";
+  version: 2;
   exportedAt: string;
-  identity: StoredIdentity;
+  keyProtection: StoredIdentity["protectedHybridSecretKey"];
+  encryption: {
+    algorithm: "ML-KEM-768-secret/HKDF-SHA-512/AES-256-GCM-v1";
+    salt: string;
+    iv: string;
+    ciphertext: string;
+  };
 }
 
-export function exportIdentityBackup(identity: StoredIdentity): string {
-  const backup: IdentityBackup = {
-    format: "quietwire-identity-backup",
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    identity,
+interface BackupPayload {
+  version: 1;
+  identity: StoredIdentity;
+  trustedContacts: StoredContact[];
+}
+
+const BACKUP_ALGORITHM = "ML-KEM-768-secret/HKDF-SHA-512/AES-256-GCM-v1" as const;
+const MAX_BACKUP_CONTACTS = 64;
+
+export async function exportIdentityBackup(
+  identity: StoredIdentity,
+  unlocked: UnlockedIdentity,
+  contacts: readonly StoredContact[],
+): Promise<string> {
+  assertStoredIdentity(identity);
+  if (deriveHybridPublicKey(unlocked.hybridSecretKey) !== identity.hybridPublicKey) {
+    throw new Error("The unlocked post-quantum key does not match this identity.");
+  }
+  const trustedContacts = await validateBackupContacts(contacts, identity);
+  const exportedAt = new Date().toISOString();
+  const salt = crypto.getRandomValues(new Uint8Array(32));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveBackupEncryptionKey(unlocked.hybridSecretKey, salt);
+  const keyProtection = identity.protectedHybridSecretKey;
+  const payload: BackupPayload = { version: 1, identity, trustedContacts };
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv,
+      additionalData: backupAdditionalData(exportedAt, keyProtection),
+    },
+    key,
+    utf8(JSON.stringify(payload)),
+  );
+  const backup: EncryptedIdentityBackup = {
+    format: "kagetamga-encrypted-backup",
+    version: 2,
+    exportedAt,
+    keyProtection,
+    encryption: {
+      algorithm: BACKUP_ALGORITHM,
+      salt: toBase64Url(salt),
+      iv: toBase64Url(iv),
+      ciphertext: toBase64Url(new Uint8Array(ciphertext)),
+    },
   };
   return `${JSON.stringify(backup, null, 2)}\n`;
 }
@@ -163,21 +213,66 @@ export async function importIdentityBackup(
   contents: string,
   passphrase: string,
 ): Promise<IdentityBundle> {
-  const parsed = JSON.parse(contents) as Partial<IdentityBackup>;
+  const parsed = JSON.parse(contents) as Partial<EncryptedIdentityBackup>;
   const backupKeys = parsed && typeof parsed === "object" ? Object.keys(parsed).sort() : [];
   if (
-    backupKeys.join(",") !== "exportedAt,format,identity,version" ||
-    parsed.format !== "quietwire-identity-backup" ||
-    parsed.version !== 1 ||
+    backupKeys.join(",") !== "encryption,exportedAt,format,keyProtection,version" ||
+    parsed.format !== "kagetamga-encrypted-backup" ||
+    parsed.version !== 2 ||
     typeof parsed.exportedAt !== "string" ||
     new Date(parsed.exportedAt).toISOString() !== parsed.exportedAt ||
-    !parsed.identity ||
-    typeof parsed.identity !== "object"
+    !parsed.keyProtection ||
+    typeof parsed.keyProtection !== "object" ||
+    !parsed.encryption ||
+    typeof parsed.encryption !== "object" ||
+    Object.keys(parsed.encryption).sort().join(",") !== "algorithm,ciphertext,iv,salt" ||
+    parsed.encryption.algorithm !== BACKUP_ALGORITHM ||
+    !isCanonicalBase64Url(parsed.encryption.salt, 32) ||
+    !isCanonicalBase64Url(parsed.encryption.iv, 12) ||
+    typeof parsed.encryption.ciphertext !== "string" ||
+    parsed.encryption.ciphertext.length < 24 ||
+    parsed.encryption.ciphertext.length > 4 * 1024 * 1024 ||
+    !isCanonicalBase64Url(parsed.encryption.ciphertext)
   ) {
-    throw new Error("This is not a supported QuietWire identity backup.");
+    throw new Error("This is not a supported encrypted KageTamga backup.");
   }
-  const identity = parsed.identity as StoredIdentity;
+  const hybridSecretKey = await unprotectHybridSecretKey(parsed.keyProtection, passphrase);
+  let payload: BackupPayload;
+  try {
+    const key = await deriveBackupEncryptionKey(
+      hybridSecretKey,
+      fromBase64Url(parsed.encryption.salt),
+    );
+    const plaintext = await crypto.subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: fromBase64Url(parsed.encryption.iv),
+        additionalData: backupAdditionalData(parsed.exportedAt, parsed.keyProtection),
+      },
+      key,
+      fromBase64Url(parsed.encryption.ciphertext),
+    );
+    const value = JSON.parse(decodeUtf8(plaintext)) as Partial<BackupPayload>;
+    if (
+      !value ||
+      typeof value !== "object" ||
+      Object.keys(value).sort().join(",") !== "identity,trustedContacts,version" ||
+      value.version !== 1 ||
+      !value.identity ||
+      typeof value.identity !== "object" ||
+      !Array.isArray(value.trustedContacts)
+    ) {
+      throw new Error("The decrypted backup payload is malformed.");
+    }
+    payload = value as BackupPayload;
+  } finally {
+    hybridSecretKey.fill(0);
+  }
+  const identity = payload.identity;
   assertStoredIdentity(identity);
+  if (JSON.stringify(identity.protectedHybridSecretKey) !== JSON.stringify(parsed.keyProtection)) {
+    throw new Error("The encrypted backup key header does not match its identity payload.");
+  }
   const unlocked = await unlockIdentity(identity, passphrase);
   const privatePublicKey = unlocked.pgpPrivateKey.toPublic();
   await assertSupportedOpenPgpKey(privatePublicKey);
@@ -189,7 +284,104 @@ export async function importIdentityBackup(
     unlocked.hybridSecretKey.fill(0);
     throw new Error("The backup's public and private OpenPGP keys do not match.");
   }
-  return { stored: identity, unlocked };
+  const contacts = await validateBackupContacts(payload.trustedContacts, identity);
+  return { stored: identity, unlocked, contacts };
+}
+
+async function deriveBackupEncryptionKey(
+  hybridSecretKey: Uint8Array<ArrayBuffer>,
+  salt: Uint8Array<ArrayBuffer>,
+): Promise<CryptoKey> {
+  const material = await crypto.subtle.importKey(
+    "raw",
+    hybridSecretKey,
+    "HKDF",
+    false,
+    ["deriveKey"],
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-512",
+      salt,
+      info: utf8("kagetamga:encrypted-identity-backup:v2"),
+    },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+function backupAdditionalData(
+  exportedAt: string,
+  keyProtection: StoredIdentity["protectedHybridSecretKey"],
+): Uint8Array<ArrayBuffer> {
+  return utf8(JSON.stringify({
+    format: "kagetamga-encrypted-backup",
+    version: 2,
+    exportedAt,
+    algorithm: BACKUP_ALGORITHM,
+    keyProtection,
+  }));
+}
+
+async function validateBackupContacts(
+  contacts: readonly StoredContact[],
+  identity: StoredIdentity,
+): Promise<StoredContact[]> {
+  if (contacts.length > MAX_BACKUP_CONTACTS) throw new Error("The trusted fingerprint list is too large.");
+  const names = new Set<string>();
+  const validated: StoredContact[] = [];
+  for (const contact of contacts) {
+    assertStoredContact(contact);
+    if (names.has(contact.name)) throw new Error("The trusted fingerprint list contains duplicate names.");
+    names.add(contact.name);
+    if (!await verifyTrustedContact(contact, identity.publicKeyArmored, identity.fingerprint)) {
+      throw new Error("A trusted fingerprint record has an invalid owner signature.");
+    }
+    validated.push(contact);
+  }
+  return validated.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function assertStoredContact(contact: StoredContact): void {
+  if (
+    !contact ||
+    typeof contact !== "object" ||
+    Object.keys(contact).sort().join(",") !==
+      "fingerprint,name,ownerFingerprint,publicKeyArmored,signature,verifiedAt,version" ||
+    contact.version !== 1 ||
+    typeof contact.name !== "string" ||
+    contact.name.length < 1 ||
+    contact.name.length > 64 ||
+    contact.name !== contact.name.normalize("NFKC").trim() ||
+    typeof contact.fingerprint !== "string" ||
+    !/^[A-F0-9]{40}$/u.test(contact.fingerprint) ||
+    typeof contact.ownerFingerprint !== "string" ||
+    !/^[A-F0-9]{40}$/u.test(contact.ownerFingerprint) ||
+    typeof contact.publicKeyArmored !== "string" ||
+    contact.publicKeyArmored.length < 1 ||
+    contact.publicKeyArmored.length > 100_000 ||
+    typeof contact.verifiedAt !== "string" ||
+    contact.verifiedAt.length !== 24 ||
+    new Date(contact.verifiedAt).toISOString() !== contact.verifiedAt ||
+    typeof contact.signature !== "string" ||
+    contact.signature.length < 1 ||
+    contact.signature.length > 20_000
+  ) {
+    throw new Error("A trusted fingerprint record in the backup is malformed.");
+  }
+}
+
+function isCanonicalBase64Url(value: string, expectedBytes?: number): boolean {
+  try {
+    const decoded = fromBase64Url(value);
+    return (expectedBytes === undefined || decoded.byteLength === expectedBytes) &&
+      toBase64Url(decoded) === value;
+  } catch {
+    return false;
+  }
 }
 
 function assertStoredIdentity(identity: StoredIdentity): void {
@@ -261,6 +453,10 @@ export async function publicKeyDetails(armoredKey: string): Promise<KeyDetails> 
 
 export function groupedFingerprint(fingerprint: string): string {
   return fingerprint.replace(/\s/gu, "").match(/.{1,4}/gu)?.join(" ") ?? fingerprint;
+}
+
+export function safeBackupBaseName(value: string): string {
+  return value.normalize("NFKD").replace(/[^A-Za-z0-9_-]+/gu, "-").replace(/^-|-$/gu, "") || "identity";
 }
 
 export function downloadText(filename: string, text: string): void {

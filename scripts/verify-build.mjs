@@ -3,7 +3,6 @@ import { readFile, readdir } from "node:fs/promises";
 import { extname, join } from "node:path";
 
 const forbidden = [
-  /cloudflareinsights\.com/iu,
   /beacon\.min\.js/iu,
   /\/cdn-cgi\/rum/iu,
   /googletagmanager/iu,

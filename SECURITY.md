@@ -1,105 +1,107 @@
 # Security policy
 
-QuietWire handles cryptographic keys and private conversations, so responsible reports are appreciated. This repository is an **initial, unaudited MVP**. It has no security certification, formal verification, bug bounty, or claim of fitness for high-risk use.
+KageTamga handles cryptographic keys and private conversations, so responsible reports are appreciated. This repository is an **initial, unaudited MVP**. It has no certification, formal verification, bug bounty, or claim of fitness for high-risk use.
 
-## Reporting a vulnerability
+## Report a vulnerability
 
-Please report vulnerabilities privately to **seriouspassenger@proton.me** with the subject `QuietWire security report`.
+Report privately to **seriouspassenger@proton.me** with subject `KageTamga security report`.
 
-Include, when possible:
+Include when possible:
 
-- the affected commit or deployed version;
-- a concise description of the impact and threat scenario;
-- reproduction steps or a minimal proof of concept;
-- affected browsers and operating systems; and
-- a suggested remediation, if you have one.
+- affected commit or deployed version;
+- impact and threat scenario;
+- reproduction steps or a minimal disposable proof of concept;
+- affected browsers and operating systems;
+- suggested remediation.
 
-Do not include real private keys, passphrases, room links, conversation contents, personal data, or credentials. Generate disposable test identities and rooms. Please do not open a public GitHub issue for an unpatched vulnerability that could expose users.
-
-Receipt and remediation are handled on a best-effort basis; this project does not promise a particular response or disclosure timeline. Coordinate public disclosure first when practical.
+Do not send real private keys, passphrases, room links, messages, personal data, TURN credentials, or backups. Generate disposable identities and rooms. Do not open a public issue for an unpatched vulnerability that could expose users. Receipt, remediation, and coordinated disclosure are best effort; no response timeline is promised.
 
 ## Supported versions
 
-Only the current `main` branch is supported. Older commits, forks, modified deployments, and third-party hosted copies may not contain the latest fixes.
+Only current `main` is supported. Older commits, forks, modified builds, and third-party deployments may lack fixes.
 
-## Security boundaries
+## Intended security boundaries
 
-The intended properties are:
+- KageTamga is a static browser application with no application signaling service, account database, transcript, offline mailbox, or server-side key/message store.
+- OpenPGP identities hard-fail unless every key packet matches the accepted v4 Ed25519-signing/X25519-encryption profile and the 40-hex fingerprint is internally consistent.
+- Every operational identity also requires an exact ML-KEM-768 pair signed into the room assertion; there is no classical-only, missing-PQ, alternate-KEM, or alternate-curve fallback.
+- The first connection uses room-key-encrypted manual offer/answer codes whose exact SDP and identity are signed by the origin peer.
+- Peer-assisted setup requires a valid origin signature plus a fresh outer signature from the direct relayer.
+- The receiver drops even correctly dual-signed relay data unless the direct relayer fingerprint is in that receiver's persistent owner-signed trust list. A red event shows the denied fingerprint when known.
+- The receiver also drops cryptographically valid setup unless the embedded newcomer/origin fingerprint independently already exists in that same local persistent list. A separate red event names that denied origin.
+- Trust is local, directional, persistent, and non-transitive. Signed trust announcements are information only.
+- Each message uses an inner signed/encrypted OpenPGP payload, a fresh random AES-256-GCM content key, recipient-specific ML-KEM-768/HKDF/AES wrapping, and a signed recipient-bound delivery manifest.
+- Chat packets travel through WebRTC data channels. Public/default STUN and optional user-supplied TURN are ICE infrastructure, not participant discovery or application signaling.
+- Passphrase-protected identity material, owner-signed trusted contacts, and encrypted history stay in origin-scoped IndexedDB until local purge.
+- Complete encrypted `.kagetamga.json` backups contain identity data and the persistent trusted-fingerprint list.
+- Production resources and dependencies are locally bundled. A build-stamped, manifest-pinned Service Worker hard-fails on inconsistent executable resources after one guarded trust-on-first-use reload.
 
-- private key generation, import, unlock, signing, and decryption happen in the browser; generated/imported OpenPGP identities are restricted to v4 Ed25519 signing plus X25519 encryption and 40-hex fingerprints, and every operational identity must also contain an exact ML-KEM-768 key pair;
-- passphrase-protected identity material and message ciphertext are stored only in that browser's IndexedDB unless the user explicitly downloads an identity backup/export;
-- chat packets travel over WebRTC data channels and are encrypted at the application layer;
-- SDP and ICE signaling contents are AES-256-GCM encrypted before the Cloudflare Worker sees them;
-- the Durable Object is an ephemeral rendezvous and does not call persistent storage APIs;
-- the production bundle contains no intentional analytics or third-party runtime resources;
-- every network request passes through the Worker so it can enforce HTTPS and security headers before the Static Assets binding serves application files; and
-- a same-origin integrity Service Worker, stamped for each shell build and included in the manifest/build digest, verifies and pins the listed public application shell in a build-specific cache after its trust-on-first-use installation. It does not cache `/api` responses or user data, and a first installation forces a reload through the new controller.
+These are not anonymity or endpoint-compromise guarantees. The static host is trusted for first delivery and later Service Worker updates. Direct peers and ICE operators can observe network metadata. A malicious same-origin bundle, hostile extension, compromised browser/OS, malware, unlocked profile, or verified malicious peer may access plaintext or keys.
 
-These are not anonymity guarantees. Cloudflare sees normal infrastructure metadata, and direct peers can normally learn one another's public IP information. Cloudflare is also trusted on the first load and for integrity Service Worker updates. A malicious same-origin bundle or Service Worker can access browser plaintext; the pinned shell does not remove this web-delivery trust point.
-
-The post-quantum layer is experimental defense in depth. It does not make the entire protocol post-quantum secure, and it does not provide post-quantum authentication. QuietWire has no classical-only or PQ downgrade mode: an invalid or incomplete combined OpenPGP/ML-KEM identity fails closed. See [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
-
-Trust is local, directional, and non-transitive. A sender encrypts only to fingerprints that sender has independently verified. Signed room-scoped trust announcements report another participant's claim but never create local or inherited trust. A signed delivery manifest binds the envelope digest and exact recipient set; it authenticates the sender's selection, not delivery. An excluded peer can see a signed not-shared notice, while an included recipient who has not verified the sender can decrypt but sees the message marked red and untrusted.
+The ML-KEM nesting is experimental defense in depth. It is not X-Wing compatibility, a formal hybrid proof, post-quantum authentication, a ratchet, forward secrecy, or post-compromise security. See [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
 
 ## High-value report areas
 
 Reports are especially useful when they demonstrate:
 
-- private key, passphrase, room-secret, or plaintext transmission outside the intended peer channel;
-- a bypass of message signature verification or fingerprint/key-change warnings;
-- a way for Cloudflare signaling code to recover encrypted SDP/ICE contents without the room secret;
-- cross-site scripting, CSP/Trusted Types bypass, or third-party script execution;
-- persistent server-side storage of messages, keys, or signaling payloads;
-- cryptographic nonce/key reuse, envelope substitution, downgrade, or recipient-confusion flaws;
-- ML-KEM/OpenPGP key-binding failures that enable identity substitution;
-- a delivery-manifest bypass that changes the envelope or recipient set without detection, grants trust transitively, or encrypts to a recipient the sender did not locally verify;
-- an import/restore bypass that accepts a revoked, expired, invalid, v6, RSA, P-curve, or otherwise unsupported OpenPGP identity;
-- a combined-profile downgrade that accepts a missing, malformed, or mismatched ML-KEM-768 key;
-- unintended plaintext in logs, error reports, URLs, caches, or browser storage;
-- integrity-manifest, Service Worker, pinned-cache, build-digest, or unknown-registration bypasses;
-- secret or plaintext exposure through developer JSON, including the opt-in per-message raw encrypted transport panel;
-- accidental ciphertext disclosure through a metadata panel that is meant to remain redacted (the nested raw transport panel intentionally shows ciphertext);
-- an Origin, room/socket/client cap, signaling rate-limit, or local-ignore bypass with security impact beyond the documented limits;
-- remote deletion outside the explicit local purge scope; or
-- dependency/build compromise that changes security-relevant output.
+- private-key, ML-KEM-secret, passphrase, room-capability, plaintext, TURN-credential, or decrypted-backup leakage;
+- CSPRNG/key/nonce reuse or broken domain separation;
+- acceptance of RSA, unsupported curves, hidden mixed subkeys, invalid/expired/revoked keys, missing ML-KEM, wrong ML-KEM sizes, or algorithm downgrade;
+- forged identity assertions, SDP, trust announcements, delivery manifests, envelopes, or recipient sets;
+- a valid/invalid/unsigned/stale/replayed relay processed when the direct relayer or embedded origin is not persistently trusted;
+- a denied setup that fails to identify the known denied relayer/origin fingerprint or still processes the nested introduction;
+- automatic transitive trust or encryption to a fingerprint the sender did not locally verify;
+- trust-change races that still send to a revoked/ignored/replaced session;
+- same-fingerprint UI confusion, distinct-fingerprint merging, or key-change suppression;
+- backup plaintext leakage, contact omission, owner-signature bypass, wrong-key import, or unauthenticated header/payload substitution;
+- cross-site scripting, Trusted Types/CSP bypass, remote script execution, or developer JSON secret/plaintext exposure;
+- integrity-manifest, build-stamp, Service Worker scope/cache/controller, guarded-reload, or digest-comparison bypass;
+- unexpected application network services, server persistence, analytics, or runtime CDN use;
+- conflicting authenticated message replay acceptance;
+- local purge affecting data outside its explicit scope.
 
-The following are documented limitations rather than vulnerabilities by themselves:
+## Documented limitations
 
-- public IP exposure to direct WebRTC peers and the STUN provider;
-- lack of TURN fallback, offline delivery, a Signal-style Double Ratchet, or remote message recall;
-- Cloudflare access to IP, timing, size, derived room-ID, and temporary peer-ID metadata;
-- room access by someone who possesses the full room link;
-- disclosure of signed trust announcements and exact delivery recipient sets to other connected room peers;
-- validly signed but locally untrusted plaintext that contains misleading, malicious, or unsafe instructions;
-- lack of delivery/read receipts and the fact that a local send is not evidence of receipt;
-- retention by another participant after local purge;
-- room-local/session-local ignore, which is not a persistent or server-side block and does not revoke the room capability;
-- local compromise by malware, a hostile extension, a malicious participant, or an unlocked device;
-- browser/filesystem remnants after IndexedDB deletion;
-- trust-on-first-use limitations of the same-origin integrity Service Worker; and
-- denial of service against the public Worker or a shared room.
+The following are not vulnerabilities by themselves:
 
-## If your identity may be compromised
+- first-use and later Service Worker update trust in the static host;
+- public/network address exposure to direct peers and configured ICE operators;
+- TURN visibility into encrypted packet metadata when the user configures it;
+- room attempts by anyone possessing the full room link;
+- no offline delivery, account recovery, remote recall, read receipt, ratchet, forward secrecy, or post-compromise security;
+- validly signed but locally untrusted plaintext displayed red when the user was selected as a recipient;
+- encrypted envelope/manifest visibility without plaintext when the viewer was not selected;
+- peer retention after local purge;
+- local/session Ignore rather than global blocking or invite revocation;
+- limited plaintext indexing/display metadata beside local encrypted message envelopes;
+- endpoint compromise, screenshots, clipboard history, browser remnants, hostile extensions, or an unlocked device;
+- denial of service against the static host, ICE service, browser, or room peers;
+- a persistently trusted malicious relayer withholding or selectively forwarding valid data.
 
-1. Stop using the affected identity and device.
-2. From a trusted device, create a new identity and back it up.
-3. Use the saved OpenPGP revocation certificate where your contacts can verify it. QuietWire does not publish revocations to a keyserver for you.
+## If an identity may be compromised
+
+1. Stop using the identity and affected device.
+2. Create and back up a new identity from a trusted device.
+3. Use the saved OpenPGP revocation certificate where contacts can independently verify it. The app does not publish it automatically.
 4. Tell contacts through an already authenticated channel and compare the new full fingerprint.
-5. Purge the old local identity and conversations only after preserving anything required for incident analysis.
+5. Remove the old persistent trust on every device.
+6. Preserve evidence as needed, then purge the old identity and local conversations.
 
-Purging cannot delete data held by peers, browser synchronization systems, device backups, screenshots, or forensic storage remnants. Deleting the identity also deletes locally signed contacts, but it does not delete message ciphertext; use the separate full-purge action when that is the intended scope.
+Purge cannot delete peer copies, screenshots, exported backups, browser sync/device backups, network/provider metadata, or forensic remnants.
 
-## Key-backup safety
+## Backup safety
 
-- Back up the complete `.quietwire.json` identity file before depending on an identity. It is the one complete operational/recovery bundle: it contains both passphrase-protected OpenPGP private material and the separately protected exact ML-KEM-768 secret, plus public identity data and any generated revocation certificate.
-- Treat `.private.asc` as OpenPGP recovery material, not a complete QuietWire backup or a classical-only operating mode. Only supported v4 Ed25519/X25519 identities can be imported; importing one creates a fresh required ML-KEM-768 key, requires verification of a new complete `.quietwire.json` backup before saving, and cannot recover older outer ML-KEM envelopes.
-- Use a unique, high-entropy passphrase and store recovery material in an appropriate offline or encrypted location.
-- Test the `.quietwire.json` restoration in a disposable, isolated browser profile; the application's check verifies both the OpenPGP fingerprint and ML-KEM public key.
-- Never paste a private key, passphrase, or live room link into a GitHub issue or security report.
-- A public key and its fingerprint are meant to be shared; a private key and passphrase are not.
+- Download the complete `name.kagetamga.json` after creation and after important trust-list changes.
+- The encrypted payload contains OpenPGP identity data, the matching ML-KEM public data, revocation certificate, and owner-signed trusted contacts. The protected ML-KEM secret in the outer header is required to derive the backup decryption key after passphrase unlock.
+- Individual `.asc` files are supplemental OpenPGP recovery, not a complete KageTamga restore.
+- Use a long unique passphrase and store backups in an appropriate offline/encrypted location.
+- Test restoration in a disposable browser profile.
+- Treat the backup as sensitive: it permits offline passphrase attempts.
 
-There is no account recovery, escrow, or server copy. Lost OpenPGP/ML-KEM keys and forgotten passphrases are unrecoverable. Although the backup's secret fields are encrypted, the file enables offline passphrase guessing and remains sensitive.
+There is no escrow or recovery service. Lost keys and forgotten passphrases are unrecoverable.
 
 ## Deployment responsibility
 
-Operators must keep dependencies and Wrangler current, protect their Cloudflare and GitHub accounts, disable Cloudflare Web Analytics/Browser Insights and Workers Logs, keep `assets.run_worker_first: true`, and verify the Worker's deployed CSP, integrity manifest, stamped Service Worker, build-specific cache, and bundle. They should also add suitable Cloudflare edge IP/rate controls for their threat and traffic model; the built-in room and per-socket bounds are not a complete denial-of-service defense. Follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). A fork that adds telemetry, remote scripts, TURN credentials, persistence, or logging changes the threat model and must disclose that clearly.
+Operators must protect source and hosting accounts, publish one complete unchanged `dist/`, serve it through HTTPS, disable runtime injection/analytics/transforms, preserve licenses, verify headers and MIME types, and compare the deployed digest. They should keep dependencies current and apply normal static-host availability controls. Follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+A fork that adds hosted signaling, analytics, remote runtime code, mandatory TURN, account state, persistence, logging, or different cryptography changes the threat model and must disclose that prominently.

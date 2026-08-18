@@ -1,6 +1,6 @@
 # Third-party notices
 
-QuietWire has no runtime CDN dependencies. Vite bundles all browser dependencies into the
+KageTamga has no runtime CDN dependencies. Vite bundles all browser dependencies into the
 same-origin deployment assets, and `package-lock.json` pins the exact dependency graph.
 
 The production build creates `THIRD_PARTY_LICENSES.txt` next to the application assets. It

@@ -6,10 +6,12 @@ import {
 } from "./hybrid-crypto";
 import { randomId, utf8 } from "./encoding";
 import { assertSupportedOpenPgpKey } from "./pgp-policy";
+import { createRoomSecret, deriveSignalingKey } from "./room";
 import {
   integrityBootstrapAction,
   waitForExpectedController,
 } from "./service-worker-bootstrap";
+import { decryptSignal, encryptSignal } from "./signaling-crypto";
 import { integrityWorkerRegistrationUrl } from "./trusted-types";
 
 export type PreflightCheckId =
@@ -31,8 +33,8 @@ export interface PreflightResult {
 }
 
 export const PREFLIGHT_CHECKS: readonly PreflightCheckId[] = [
-  "secure-context",
   "resource-isolation",
+  "secure-context",
   "browser-crypto",
   "openpgp",
   "mlkem",
@@ -46,7 +48,7 @@ export const PREFLIGHT_CHECKS: readonly PreflightCheckId[] = [
 // installs therefore reload once and only let the pinned Service Worker serve the
 // application on the following navigation.
 const integrityControlledAtStartup = Boolean(navigator.serviceWorker?.controller);
-const INTEGRITY_RELOAD_KEY = "quietwire.integrity-reload-attempt.v1";
+const INTEGRITY_RELOAD_KEY = "kagetamga.integrity-reload-attempt.v1";
 
 function integrityReloadAlreadyAttempted(): boolean {
   try {
@@ -129,7 +131,11 @@ export async function runPreflight(
 
 async function checkSecureContext(): Promise<void> {
   if (!window.isSecureContext) throw new Error("Open this application over HTTPS.");
-  if (location.protocol !== "https:" && location.hostname !== "localhost") {
+  const loopback = location.hostname === "localhost" ||
+    location.hostname === "127.0.0.1" ||
+    location.hostname === "[::1]" ||
+    location.hostname === "::1";
+  if (location.protocol !== "https:" && !loopback) {
     throw new Error("The page was not delivered through HTTPS.");
   }
   if (!window.crossOriginIsolated) {
@@ -153,7 +159,7 @@ async function checkBrowserCrypto(): Promise<void> {
     "encrypt",
     "decrypt",
   ]);
-  const expected = utf8("quietwire-webcrypto-self-test");
+  const expected = utf8("kagetamga-webcrypto-self-test");
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, expected);
   const plaintext = new Uint8Array(
     await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext),
@@ -170,14 +176,14 @@ async function checkBrowserCrypto(): Promise<void> {
 async function checkOpenPgp(): Promise<{ ciphertext: string; fingerprint: string }> {
   const generated = await openpgp.generateKey({
     type: "curve25519",
-    userIDs: [{ name: "QuietWire startup self-test" }],
+    userIDs: [{ name: "KageTamga startup self-test" }],
     format: "armored",
   });
   const privateKey = await openpgp.readPrivateKey({ armoredKey: generated.privateKey });
   const publicKey = await openpgp.readKey({ armoredKey: generated.publicKey });
   await assertSupportedOpenPgpKey(publicKey);
   const ciphertext = await openpgp.encrypt({
-    message: await openpgp.createMessage({ text: "quietwire-openpgp-self-test" }),
+    message: await openpgp.createMessage({ text: "kagetamga-openpgp-self-test" }),
     encryptionKeys: publicKey,
     signingKeys: privateKey,
     format: "armored",
@@ -188,7 +194,7 @@ async function checkOpenPgp(): Promise<{ ciphertext: string; fingerprint: string
     verificationKeys: publicKey,
     format: "utf8",
   });
-  if (decrypted.data !== "quietwire-openpgp-self-test" || !decrypted.signatures[0]) {
+  if (decrypted.data !== "kagetamga-openpgp-self-test" || !decrypted.signatures[0]) {
     throw new Error("OpenPGP round-trip self-test failed.");
   }
   await decrypted.signatures[0].verified;
@@ -212,7 +218,7 @@ async function checkMlKem(pgpCiphertext: string, fingerprint: string): Promise<v
 
 async function checkIndexedDb(): Promise<void> {
   if (!globalThis.indexedDB) throw new Error("IndexedDB is unavailable.");
-  const name = `quietwire-preflight-${randomId(8)}`;
+  const name = `kagetamga-preflight-${randomId(8)}`;
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(name, 1);
     request.onupgradeneeded = () => request.result.createObjectStore("check");
@@ -239,12 +245,12 @@ async function checkIndexedDb(): Promise<void> {
 }
 
 async function checkPeerToPeerApis(): Promise<void> {
-  if (!globalThis.RTCPeerConnection || !globalThis.WebSocket) {
-    throw new Error("WebRTC or WebSocket is unavailable in this browser.");
+  if (!globalThis.RTCPeerConnection) {
+    throw new Error("WebRTC is unavailable in this browser.");
   }
   const connection = new RTCPeerConnection();
   try {
-    const channel = connection.createDataChannel("quietwire-preflight");
+    const channel = connection.createDataChannel("kagetamga-preflight");
     channel.close();
   } finally {
     connection.close();
@@ -263,10 +269,10 @@ async function checkResourceIsolation(): Promise<void> {
   if (external) throw new Error(`External runtime resource detected: ${new URL(external).origin}`);
 
   const markerText = document.documentElement.innerHTML.toLowerCase();
-  const forbiddenMarkers = ["moc.sthgisnieralfduolc", "sj.nim.nocaeb", "mur/igc-ndc/"]
+  const forbiddenMarkers = ["sj.nim.nocaeb", "reganamgatelgoog", "scitylana-elgoog", "gohtsop"]
     .map((marker) => [...marker].reverse().join(""));
   if (forbiddenMarkers.some((marker) => markerText.includes(marker))) {
-    throw new Error("Cloudflare Browser Insights/RUM injection was detected.");
+    throw new Error("Unexpected analytics or telemetry injection was detected.");
   }
 
   await verifyIntegrityWorker();
@@ -276,10 +282,12 @@ export async function verifyIntegrityWorker(): Promise<string> {
   if (!("serviceWorker" in navigator)) {
     throw new Error("This browser cannot install the integrity Service Worker.");
   }
-  const expectedScript = new URL("/integrity-worker.js", location.origin).href;
-  const expectedScope = new URL("/", location.origin).href;
+  const expectedScope = new URL("./", document.baseURI).href;
+  const expectedScript = new URL("integrity-worker.js", expectedScope).href;
   const registrations = await navigator.serviceWorker.getRegistrations();
-  const foreign = registrations.find((registration) => {
+  const relevantRegistrations = registrations.filter((registration) =>
+    location.href.startsWith(registration.scope) || registration.scope === expectedScope);
+  const foreign = relevantRegistrations.find((registration) => {
     const scripts = [
       registration.active?.scriptURL,
       registration.installing?.scriptURL,
@@ -287,8 +295,8 @@ export async function verifyIntegrityWorker(): Promise<string> {
     ].filter((script): script is string => Boolean(script));
     return registration.scope !== expectedScope || scripts.some((script) => script !== expectedScript);
   });
-  if (foreign || registrations.length > 1) {
-    throw new Error("An unknown Service Worker is registered for this origin.");
+  if (foreign || relevantRegistrations.length > 1) {
+    throw new Error("An unknown Service Worker can control this application path.");
   }
 
   let registration = registrations.find(
@@ -297,7 +305,7 @@ export async function verifyIntegrityWorker(): Promise<string> {
   registration ??= await navigator.serviceWorker.register(
     integrityWorkerRegistrationUrl(expectedScript),
     {
-      scope: "/",
+      scope: new URL(expectedScope).pathname,
       updateViaCache: "none",
     },
   );
@@ -308,7 +316,7 @@ export async function verifyIntegrityWorker(): Promise<string> {
   );
   registration = readyRegistration;
   if (registration.scope !== expectedScope) {
-    throw new Error("The integrity Service Worker does not control the complete origin scope.");
+    throw new Error("The integrity Service Worker does not control the complete application scope.");
   }
   if (registration.waiting) {
     throw new Error("An application update is waiting. Close every app tab, reopen, and verify again.");
@@ -364,73 +372,20 @@ async function requestPinnedShellVerification(worker: ServiceWorker): Promise<st
 }
 
 async function checkSignalingService(): Promise<void> {
-  const response = await fetch("/api/health", { cache: "no-store", credentials: "omit" });
-  if (!response.ok) throw new Error("The signaling Worker health check failed.");
-  const body = (await response.json()) as { ok?: boolean; storage?: string; signaling?: string };
-  if (body.ok !== true || body.storage !== "none" || body.signaling !== "ephemeral") {
-    throw new Error("The signaling Worker did not confirm its storage-free mode.");
-  }
-  const csp = response.headers.get("Content-Security-Policy") ?? "";
+  const roomSecret = createRoomSecret();
+  const key = await deriveSignalingKey(roomSecret);
+  const expected = {
+    mode: "manual-offer-answer",
+    relayPolicy: "persistent-trusted-fingerprint-only",
+    nonce: randomId(),
+  };
+  const encrypted = await encryptSignal(key, expected);
+  const recovered = await decryptSignal<typeof expected>(key, encrypted);
   if (
-    !csp.includes("default-src 'self'") ||
-    !csp.includes("script-src 'self'") ||
-    !csp.includes("connect-src 'self'") ||
-    !csp.includes("object-src 'none'")
+    recovered.mode !== expected.mode ||
+    recovered.relayPolicy !== expected.relayPolicy ||
+    recovered.nonce !== expected.nonce
   ) {
-    throw new Error("Required Content Security Policy headers are missing.");
+    throw new Error("Backend-free encrypted peer setup self-test failed.");
   }
-
-  const shell = await fetch("/", { cache: "no-store", credentials: "omit" });
-  if (!shell.ok) throw new Error("The secured application shell could not be fetched.");
-  const shellCsp = shell.headers.get("Content-Security-Policy") ?? "";
-  if (
-    !shellCsp.includes("require-trusted-types-for 'script'") ||
-    !shellCsp.includes("trusted-types quietwire") ||
-    shell.headers.get("Cross-Origin-Opener-Policy") !== "same-origin" ||
-    shell.headers.get("Cross-Origin-Embedder-Policy") !== "require-corp" ||
-    !shell.headers.get("Permissions-Policy")
-  ) {
-    throw new Error("The application shell is missing mandatory isolation headers.");
-  }
-
-  await checkDisposableSignalingSocket();
-}
-
-async function checkDisposableSignalingSocket(): Promise<void> {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = new URL(`${protocol}//${location.host}/api/signal/${randomId(32)}`);
-  url.searchParams.set("peer", randomId());
-
-  await new Promise<void>((resolve, reject) => {
-    const socket = new WebSocket(url);
-    const timeout = window.setTimeout(() => {
-      socket.close();
-      reject(new Error("The disposable signaling WebSocket timed out."));
-    }, 12_000);
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeout);
-      socket.close(1000, "Preflight complete");
-      if (error) reject(error);
-      else resolve();
-    };
-    socket.onerror = () => finish(new Error("The signaling Durable Object could not be reached."));
-    socket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(String(event.data)) as { type?: unknown; peerIds?: unknown };
-        if (
-          message.type !== "roster" ||
-          !Array.isArray(message.peerIds) ||
-          message.peerIds.length !== 0
-        ) {
-          throw new Error("The signaling Durable Object returned an invalid roster.");
-        }
-        finish();
-      } catch (error) {
-        finish(error instanceof Error ? error : new Error("Invalid signaling response."));
-      }
-    };
-  });
 }

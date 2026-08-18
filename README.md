@@ -1,19 +1,52 @@
-# QuietWire
+**[Türkçe README](README.tr.md)**
 
-[![Current QuietWire SHA-256 build digest in hexadecimal and Base64URL](docs/build-digest.svg)](https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat)
+# KageTamga
 
-<!-- quietwire-integrity-console:start -->
-## Verify the deployed build in your browser
+> Trust the mark, not the network.
 
-After QuietWire passes mandatory preflight, open the deployed app's browser developer console and paste this complete command:
+Browser-only P2P messaging with fingerprint trust, signed peer introductions, and Curve25519 + ML-KEM-768 E2EE.
+
+## Etymology
+
+**KageTamga** is an intentionally coined Japanese–Turkic name. *Kage* (影) means “shadow” in Japanese; *tamga* is a historic Turkic mark or seal associated with identity and provenance. Together they suggest a private mark that can be independently verified—the app's full-fingerprint trust model.
+
+> **Security status:** this is an unaudited MVP, not a replacement for a professionally audited messenger. Its FIPS 203 ML-KEM-768 layer is an application-specific, pure-JavaScript defense in depth. Read [SECURITY.md](SECURITY.md) and the [threat model](docs/THREAT-MODEL.md) before sensitive use.
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Overview](#overview)
+- [Trust and peer introduction](#trust-and-peer-introduction)
+- [Message protection](#message-protection)
+- [Storage, backup, and privacy](#storage-backup-and-privacy)
+- [Integrity model](#integrity-model)
+- [Documentation](#documentation)
+- [Development](#development)
+- [License](#license)
+
+## Quick start
+
+### 1. See the demo and verify it
+
+**Demo URL placeholder:** [https://example.invalid/kagetamga](https://example.invalid/kagetamga) <!-- Replace with the public KageTamga demo URL. -->
+
+Open the repository's main source page through a separately trusted path, then compare either complete digest shown by the app with this static build card. The browser-console command below asks the controlling integrity Service Worker to re-hash its pinned cache and prints both lowercase hexadecimal and unpadded Base64URL SHA-256 encodings.
+
+[![Current KageTamga SHA-256 build digest in hexadecimal and Base64URL](docs/build-digest.svg)](https://github.com/SeriousPassenger/KageTamga)
+
+<!-- kagetamga-integrity-console:start -->
+#### Verify the deployed build in your browser
+
+After KageTamga passes mandatory preflight, open the deployed app's browser developer console and paste this complete command:
 
 ```js
 await (async () => {
   const registration = await navigator.serviceWorker.ready;
   const worker = navigator.serviceWorker.controller;
-  const expectedWorkerUrl = new URL("/integrity-worker.js", location.origin).href;
-  if (!worker || worker.scriptURL !== expectedWorkerUrl) {
-    throw new Error("The expected QuietWire integrity worker does not control this page.");
+  const expectedScope = new URL(".", location.href).href;
+  const expectedWorkerUrl = new URL("integrity-worker.js", expectedScope).href;
+  if (registration.scope !== expectedScope || !worker || worker.scriptURL !== expectedWorkerUrl) {
+    throw new Error("The expected KageTamga integrity worker does not control this page.");
   }
   if (registration.waiting) {
     throw new Error("A waiting integrity-worker update must be resolved before comparison.");
@@ -49,187 +82,125 @@ await (async () => {
     base64Url: result,
     hex: Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
   });
-  console.log("QuietWire build digest (SHA-256, Base64URL unpadded):", output.base64Url);
-  console.log("QuietWire build digest (SHA-256, lowercase hex):", output.hex);
+  console.log("KageTamga build digest (SHA-256, Base64URL unpadded):", output.base64Url);
+  console.log("KageTamga build digest (SHA-256, lowercase hex):", output.hex);
   return output;
 })()
 ```
 
-It requires the exact root-scoped `/integrity-worker.js` controller, asks that worker to reverify its pinned manifest and cache, validates the returned 32-byte SHA-256 value, and prints and returns both lowercase hexadecimal and unpadded Base64URL encodings. Compare either complete value with the static digest card above through a separate view of the repository's main source page.
+It requires the exact application-path-scoped `integrity-worker.js` controller, asks that Service Worker to reverify its pinned manifest and cache, validates the returned 32-byte SHA-256 value, and prints and returns both lowercase hexadecimal and unpadded Base64URL encodings. Compare either complete value with the static digest card above through a separate view of the repository's main source page.
 
 > This is a local pinned-shell consistency check, not a trustless proof. First-use delivery, later Service Worker updates, GitHub, the build environment, the browser, and the endpoint remain trust boundaries.
-<!-- quietwire-integrity-console:end -->
+<!-- kagetamga-integrity-console:end -->
 
-QuietWire is a browser-first, peer-to-peer, end-to-end encrypted chat that deploys to Cloudflare Workers. Every HTTP request passes through the Worker for HTTPS enforcement and security headers before the Static Assets binding serves the application; a Durable Object temporarily relays encrypted WebRTC setup packets. Chat messages travel directly between participants over WebRTC data channels. The Worker does not store messages, room secrets, private keys, or public keys.
+### 2. Host your own static build
 
-> **Security status:** this is an initial, unaudited MVP—not a production-ready replacement for a professionally audited messenger. The experimental FIPS 203 ML-KEM-768 layer uses a pure-JavaScript implementation and an application-specific composition. Review [SECURITY.md](SECURITY.md) and the [threat model](docs/THREAT-MODEL.md) before relying on it for sensitive communication.
-
-## What it provides
-
-- Direct, ordered peer-to-peer messaging with WebRTC `RTCDataChannel` in a small-group full mesh.
-- A Cloudflare Durable Object used only as an ephemeral WebSocket signaling rendezvous. Signaling bodies are AES-256-GCM encrypted in the browser with a key derived from the room secret.
-- Locally generated OpenPGP v4 Curve25519 identities using standardized Ed25519 signing and X25519 encryption. Private keys remain in the browser, passphrase-encrypted at rest.
-- Per-message OpenPGP Curve25519 encryption/signatures plus an experimental outer FIPS 203 ML-KEM-768/AES-256-GCM confidentiality layer.
-- Full OpenPGP fingerprints, grouped fingerprint display, copy/QR tools, and explicit out-of-band verification guidance.
-- Encrypted chat history—ciphertext plus signed delivery metadata—in browser IndexedDB until the user purges it.
-- A complete, passphrase-protected `.quietwire.json` identity backup containing both the OpenPGP and ML-KEM recovery material, plus separate OpenPGP public/private exports and a revocation certificate.
-- English, German, Japanese, Turkish, Spanish, French, Simplified Chinese, and Traditional Chinese, with local automatic language selection.
-- Same-origin-only Content Security Policy, restrictive browser permissions, no third-party runtime resources, no analytics, and Workers observability disabled in configuration.
-- A trust-on-first-use integrity Service Worker that verifies and pins the manifest-listed HTML, JavaScript, CSS, and stamped integrity worker in a build-specific cache; it never handles `/api` traffic or caches user data.
-- Mandatory startup checks for HTTPS, cross-origin isolation, WebCrypto, OpenPGP, ML-KEM, IndexedDB, WebRTC, resource isolation, pinned-shell integrity, and the signaling health contract.
-- Optional developer JSON with separate redacted application/room/message metadata panels and a nested, collapsed per-message view of the raw encrypted transport envelope. Neither view includes plaintext, private keys, passphrases, or the room secret.
-- A direct-only network policy in this release. No TURN relay credentials or message-delivery service are included.
-
-## Architecture
-
-```mermaid
-flowchart TD
-    A["Browser A\nkeys + ciphertext history"]
-    B["Browser B\nkeys + ciphertext history"]
-    X["Cloudflare Worker + Static Assets\nheaders + public integrity-pinned shell"] --> A
-    X --> B
-    A <-->|"E2EE messages\nWebRTC data channel"| B
-    A -. "encrypted SDP / ICE" .-> S["Worker + Durable Object\nephemeral signaling"]
-    B -. "encrypted SDP / ICE" .-> S
-    A --> T["Cloudflare STUN\naddress discovery"]
-    B --> T
-```
-
-The random 256-bit room secret is stored in the URL fragment (`#room=…`). Browsers do not send fragments in HTTP requests. Treat the complete link as a capability: anyone who obtains it can attempt to join. The client derives:
-
-- a SHA-256 room identifier, which the Durable Object uses for rendezvous; and
-- an HKDF-SHA-256/AES-256-GCM key, which encrypts SDP and ICE signaling contents before they reach Cloudflare.
-
-The Durable Object sees the derived opaque room identifier, temporary peer identifiers, connection timing, encrypted envelopes, and normal network metadata. It keeps current WebSocket connection state so peers can find one another, but the application never calls Durable Object storage, D1, KV, R2, or Queues. Signaling requires an exact same-origin WebSocket `Origin`, a room is capped at eight signaling peers, and each socket is limited to 200 signaling messages per 10 seconds. The client also enforces its eight-peer roster limit and stops accepting new identities after 32 unique peer IDs in one tab session. These are abuse bounds, not authentication or complete denial-of-service protection.
-
-Once WebRTC connects, peers exchange identity information and E2EE chat packets over the direct data channel. Each device retains only its own local ciphertext history. There is no central transcript and no offline mailbox.
-
-After every intended participant has connected, a user can **locally lock signaling**. This permanently closes that tab's signaling WebSocket for the current room session while its established WebRTC data channels continue. It does not lock the room on the server, revoke the invite, disconnect other peers from signaling, or stop people with the link from forming connections that do not involve the locked tab. A refresh/leave starts a new session; a locked tab cannot negotiate a new peer or recover a connection after a network/topology change.
-
-The versioned message envelope is `OpenPGP-Curve25519+ML-KEM-768/AES-256-GCM-v1`: OpenPGP.js first creates a classically encrypted and signed inner message. Every message gets a fresh random AES-256 content key that encrypts that inner armor, and a recipient-specific key derived from an ML-KEM-768 encapsulated secret wraps the content key. QuietWire has no shared room key, so joins, leaves, and trust changes affect the next sender-selected recipient set without a group-key rotation. This is not X-Wing wire compatibility; the project avoids claiming a draft X-Wing construction that it does not implement.
-
-QuietWire does not accept or reuse SSH private keys. An SSH Ed25519 key is an authentication credential, not an OpenPGP message-encryption identity; reusing it would expand the impact of a compromise. Use a dedicated OpenPGP identity generated by or imported into the application.
-
-OpenPGP imports are intentionally restricted to valid, unexpired, non-revoked v4 identities with a complete 40-hex fingerprint, Ed25519 signing key, and X25519 encryption key. Standard and legacy OpenPGP Curve25519 encodings are accepted; RSA, NIST P-curve, other-algorithm, and v6/64-hex-fingerprint keys are rejected rather than silently changing the advertised security profile.
-
-| Data | Where it exists | Sent to Cloudflare application code? |
-| --- | --- | --- |
-| Room secret | URL fragment and browser memory | No |
-| Private OpenPGP/PQ key material | Browser memory; passphrase-protected identity in IndexedDB; explicit downloaded backup if the user creates one | No |
-| Public keys and chat plaintext | Participant browsers | No |
-| Chat ciphertext | Participant data channels and each participant's IndexedDB | No |
-| Encrypted SDP/ICE | Browser, Worker, and Durable Object WebSocket | Yes, transiently |
-| Derived room ID, peer IDs, IP/timing metadata | Browser and Cloudflare | Yes |
-| Integrity shell cache | Browser Cache Storage; public HTML/JS/CSS, stamped integrity worker, and manifest only | Public assets originate at Cloudflare; no user data |
-
-See [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) for the complete trust and limitation analysis.
-
-## Deploy to Cloudflare
-
-Requirements: a Cloudflare account, Node.js 22 or newer, and npm.
+Requirements: Node.js 22 or newer, npm, an HTTPS static host, and no application backend.
 
 ```bash
-git clone https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat.git
-cd cloudflare-p2p-e2ee-chat
+git clone https://github.com/SeriousPassenger/KageTamga.git
+cd KageTamga
 npm ci
-npx wrangler login
-npm run deploy
+npm run build
 ```
 
-The deploy script builds the client, stamps the integrity Service Worker for that shell, creates the pinned-shell integrity manifest/build digest, checks generated files for known analytics markers and external HTML script/style references, creates the SQLite-backed Durable Object class from `wrangler.jsonc`, uploads the static assets, and deploys the Worker. No application secret, persistent application database, TURN account, or separate backend is needed. `assets.run_worker_first` is globally `true`, so the Worker can redirect the very first HTTP visit and apply the same security headers to every response before serving a static asset. This means network asset requests invoke the Worker; after first installation, the build-specific integrity cache serves the pinned shell locally and minimizes repeated edge requests.
+Publish the contents of `dist/` at either an origin root or a static-host subpath. Do not modify, minify, inject into, or transform the generated files after the build. The included `_headers` file applies the preferred security policy on hosts that support that format; the pinned browser Service Worker also serves the verified shell with mandatory CSP and cross-origin-isolation headers after one guarded first-use reload. See the [deployment guide](docs/DEPLOYMENT.md) for generic hosting and verification requirements.
 
-The deployed `workers.dev` URL is an HTTPS secure context. For a custom hostname, add a Worker custom domain in the Cloudflare dashboard; do not create a cross-account CNAME to another Cloudflare hostname.
-
-Cloudflare account-level settings can still inject Browser Insights or Web Analytics. Disable those features and verify the final response as described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The repository's CSP is a second line of defense, not a reason to leave injection enabled.
-
-## Local development
-
-Install dependencies, then run the Wrangler-based development command:
+### 3. Run locally
 
 ```bash
+git clone https://github.com/SeriousPassenger/KageTamga.git
+cd KageTamga
 npm ci
 npm run dev
 ```
 
-`npm run dev` builds the integrity-pinned client and starts Wrangler with the Worker, Static Assets, and Durable Object. Open the localhost URL it prints; localhost is treated as a secure context by modern browsers. Two separate browser profiles provide the most realistic local peer test.
+Open the printed localhost URL in two separate browser profiles. Each browser creates or imports an identity, opens the same room link, and manually exchanges the first encrypted offer/answer codes. `npm run dev` builds and previews the same integrity-pinned static distribution used for deployment.
 
-Useful checks:
+## Overview
+
+KageTamga is a backend-free, small-group messenger. Chat ciphertext travels over WebRTC data channels directly between browsers. The first two participants exchange room-key-encrypted WebRTC offer/answer codes through any channel they already have. Once trusted peers are connected, they may introduce additional participants across the existing P2P mesh using independently signed newcomer data wrapped in a second signature from each relayer—but only to browsers that already trust that newcomer's fingerprint independently.
+
+There is no application signaling server, account, central transcript, offline mailbox, runtime CDN, analytics SDK, or mandatory relay service. Public STUN endpoints are the configurable default for network-path discovery; users may replace them, add TURN credentials, or leave the list empty for LAN-only host candidates. STUN and TURN never discover room members and cannot replace offer/answer signaling.
+
+Key properties:
+
+- Full-mesh WebRTC messaging for roughly 2–8 simultaneously connected participants.
+- OpenPGP v4 identities hard-restricted to Ed25519 signing and X25519 encryption, including every certificate subkey.
+- A mandatory FIPS 203 ML-KEM-768 key pair bound inside every signed room identity assertion.
+- Full 40-hex fingerprint display, QR presentation, copying, and explicit independent comparison.
+- Persistent, owner-signed, origin-scoped trusted-fingerprint records available before room creation.
+- English, German, Japanese, Turkish, Spanish, French, Simplified Chinese, and Traditional Chinese.
+- Optional redacted developer JSON per application, room, and individual message.
+
+## Trust and peer introduction
+
+Trust is local, directional, and non-transitive. A valid signature proves possession of a key; it does not establish who controls that key.
+
+1. Before creating or joining a room, users can inspect their persistent trusted-fingerprint list or add a contact using the complete public key and independently compared 40-hex fingerprint.
+2. The first connection uses a manually exchanged encrypted offer and answer. Each exact SDP description and signed identity assertion is signed by its originating peer.
+3. A participant becomes a permitted relayer only when its exact fingerprint is already in the receiver's persistent, locally owner-signed trust list.
+4. The introduced origin fingerprint must separately already exist in every receiver/intermediate browser's own persistent trust list. A relayer's trust never transfers.
+5. A relayed introduction contains the newcomer's signed identity or signed targeted SDP, plus a fresh room-, target-, hop-, nonce-, and timestamp-bound signature from the direct relayer. Every subsequent hop replaces that outer relayer signature with its own.
+6. Unsigned, invalid, stale, replayed, or non-persistently-trusted setup is dropped before connection processing. Red chat events contain the denied direct-relayer or introduced-origin fingerprint. A peer asked to forward through an untrusted next hop or for an untrusted origin also records the local error and does not forward.
+
+A participant not already trusted by a receiver must connect to that receiver manually for independent verification or be added to the persistent list through a separately obtained public key. Valid signatures prove the presented keys; they never create trust.
+
+Multiple transport sessions carrying the same valid fingerprint appear as one identity. The newest active signed assertion supplies the current display name; an online session wins over an offline copy. Distinct fingerprints never merge, even when their display names match. Offline and ignored identities are collapsed behind a separate toggle.
+
+## Message protection
+
+Every chat message uses the versioned `OpenPGP-Curve25519+ML-KEM-768/AES-256-GCM-v1` envelope:
+
+1. OpenPGP.js signs the plaintext with Ed25519 and encrypts it to the sender plus each locally trusted X25519 recipient.
+2. The browser generates a fresh random AES-256-GCM content key and encrypts that signed OpenPGP ciphertext.
+3. For each selected recipient, ML-KEM-768 encapsulation and HKDF-SHA-512 derive a recipient-specific AES key that wraps the fresh content key.
+4. A signed delivery manifest binds the exact outer envelope, message ID, sender, room, timestamp, and sorted recipient fingerprint set.
+
+The content key is never sent in plaintext and there is no shared room message key. A join, leave, ignore, or trust change alters the independently selected recipients of later messages; it does not rotate a global AES key. This is not Signal's Double Ratchet and does not claim application-layer forward secrecy or post-compromise security.
+
+A validly signed message from a locally untrusted sender can be decrypted only if that sender selected the viewer as a recipient; it is displayed in red until the sender fingerprint is independently verified. A sender that has not trusted the viewer does not wrap the message key for that viewer, so only the encrypted envelope and delivery manifest are visible.
+
+## Storage, backup, and privacy
+
+- Private keys, signed trusted-contact records, and encrypted message records stay in origin-scoped IndexedDB until the user purges them.
+- Chat plaintext is kept only in the current page state. Other participants may retain their own copies; local purge cannot erase another device.
+- The random 256-bit room capability remains after `#room=` in the URL, so normal HTTP requests omit it. Anyone who obtains the complete link can still attempt a connection; the link is not an identity proof.
+- `name.kagetamga.json` can be downloaded at any time after unlock. Its encrypted payload contains the full OpenPGP identity, passphrase-protected ML-KEM secret, revocation certificate, and owner-signed persistent trusted-fingerprint list. The identity/trust payload is encrypted with AES-256-GCM under a key derived from the unlocked ML-KEM secret; the protected ML-KEM secret remains passphrase-gated for restoration.
+- ICE endpoints and TURN credentials remain only in the current tab's memory and are not backed up.
+- Direct WebRTC peers normally learn one another's network addresses. Configured STUN operators can see address/timing metadata; TURN operators additionally relay already encrypted packet traffic.
+
+## Integrity model
+
+All production JavaScript, CSS, cryptographic libraries, and licenses are shipped locally with no runtime CDN. The build hashes every generated HTML/JavaScript/CSS asset, stamps that shell digest into `integrity-worker.js`, hashes the stamped worker too, and publishes the canonical map as `integrity-manifest.json`. The Service Worker installs a build-specific cache only after matching every digest, then refuses every unpinned request inside the application path.
+
+This is trust on first use, not an independent proof. A malicious first response, malicious Service Worker update, compromised source/build account, hostile browser extension, browser vulnerability, malware, or unlocked endpoint can still capture secrets. Compare the full build digest from a separately obtained repository view and review the [threat model](docs/THREAT-MODEL.md).
+
+## Documentation
+
+| Document | Purpose |
+| --- | --- |
+| [User guide](docs/USER-GUIDE.md) | Identities, pre-room trust, rooms, manual connection, peer states, backups, purge, and developer mode |
+| [Architecture](docs/ARCHITECTURE.md) | Static delivery, browser mesh, dual-signed introductions, message encryption, storage, and exposure |
+| [Threat model](docs/THREAT-MODEL.md) | Trust boundaries, attacker capabilities, guarantees, exclusions, and limitations |
+| [Deployment guide](docs/DEPLOYMENT.md) | Generic static hosting, security headers, integrity validation, and release checks |
+| [Security policy](SECURITY.md) | Private vulnerability reporting, security status, and high-value review areas |
+| [Contributing guide](CONTRIBUTING.md) | Required tests and privacy, cryptographic, frontend, protocol, and documentation invariants |
+| [Third-party notices](THIRD_PARTY_NOTICES.md) | Bundling policy, attribution, and complete production license generation |
+
+## Development
 
 ```bash
+npm ci
 npm run typecheck
 npm test
 npm run build
 npm run check
 ```
 
-`npm run build` first hashes the generated non-Service-Worker shell and stamps that shell digest into `integrity-worker.js`. It then hashes the stamped worker together with the HTML, CSS, and JavaScript into `integrity-manifest.json` and the complete build digest. The build scans generated HTML, CSS, JavaScript, and JSON for known Cloudflare RUM/analytics markers and rejects remote or protocol-relative `<script src>` and `<link href>` references in generated HTML. This is deliberately narrower than a proof that no remote URL can be constructed at runtime, so startup checks and deployed Network inspection remain required.
+`npm run check` runs strict TypeScript, all tests, the production build, complete production-license generation, integrity-worker stamping, manifest generation, the security build verifier, and the static digest card update. CI also audits dependencies, verifies the README console command and digest card, and uploads `integrity-manifest.json` under the build digest's lowercase hexadecimal filename.
 
-## Use fingerprints correctly
-
-Encryption without authentication does not prove whom you are talking to. A room-link recipient—or an attacker who obtains the link—can join under any display name.
-
-1. Open the peer's security details and reveal the **full 40-hex OpenPGP v4 fingerprint**.
-2. Compare every character through a separate trusted channel: in person, a known phone call, or a previously authenticated account. A QR scan is convenient, but only authentic when the QR itself came through a trusted path.
-3. Mark the fingerprint verified only after an exact match.
-4. Treat any later key-change warning as a new identity. Stop and verify again before sharing sensitive information.
-
-A display name, avatar, short key ID, room membership, or “encrypted” badge is not identity proof. QuietWire cannot automate the human trust decision.
-
-Trust is **directional, local, and non-transitive**. If Alice verifies Bob, Alice may encrypt her next messages to Bob; this does not mean Bob trusts Alice, and Alice trusting Bob plus Bob trusting Carol never makes Alice trust Carol. Signed, room-scoped trust announcements let peers verify what another participant claimed, but they are informational and never create a local trusted contact.
-
-Each message has a signed delivery manifest binding the exact encrypted envelope digest and recipient fingerprints. Other than the sender's own local-history recipient entry, the sender encrypts only to recipients that sender has locally verified, then distributes the encrypted packet across the room mesh. An excluded peer can verify an authenticated “not shared by sender” notice but cannot decrypt. A recipient whom the sender included can decrypt even if the recipient has not verified the sender; QuietWire shows that validly signed plaintext in red as untrusted. Do not treat readable or signed content as safe instructions until the sender fingerprint is independently verified. Recipient sets and signed trust announcements disclose parts of the room trust graph to other room peers.
-
-## Back up your identity
-
-After generating an identity, download:
-
-- the **complete QuietWire backup** (`.quietwire.json`), which contains the passphrase-encrypted OpenPGP private key, the separately passphrase-protected ML-KEM secret key, public identity data, and any generated revocation certificate;
-- the **encrypted OpenPGP private key** (`.private.asc`), OpenPGP recovery/export material that is not a complete QuietWire recovery and cannot operate without a new required ML-KEM-768 key;
-- the **public key** (`.asc`), safe to share; and
-- the **revocation certificate**, used to tell others that a lost or compromised OpenPGP key should no longer be trusted.
-
-Use the `.quietwire.json` file for full restore and the application's required backup check: it re-imports the file locally, unlocks it, enforces the Ed25519/X25519 v4 key policy, and verifies the exact ML-KEM-768 key pair as well as the OpenPGP fingerprint. The app hard-fails a missing, mismatched, or malformed half of this combined profile; there is no classical-only or PQ downgrade mode. Importing only a supported Curve25519 `.private.asc` seeds a new combined profile by generating a fresh required ML-KEM key, then requires a complete `.quietwire.json` backup check before saving it. That new profile cannot decrypt previously stored outer ML-KEM envelopes and is not equivalent to restoring the original complete identity.
-
-The complete identity backup does not contain conversations, contact-verification records, language/settings, or the integrity cache. Those remain local to the browser profile unless separately handled outside QuietWire.
-
-Keep the complete backup and its strong passphrase in appropriate secure locations. The protected key data is still sensitive and can be attacked offline if the passphrase is weak. Never share either one in a chat or issue report. Test the `.quietwire.json` backup in an isolated browser profile before depending on it. Lost key material and forgotten passphrases cannot be recovered by the project or by Cloudflare.
-
-“Purge conversation” removes only that room's local message records. “Delete local identity” removes the identity and all locally signed contact/trust records, but leaves encrypted message history. “Purge all” deletes the QuietWire IndexedDB database, local/session storage, all Cache Storage for the origin, and all Service Worker registrations on that origin. Reloading then performs a new integrity trust-on-first-use installation. None of these actions can recall peer copies, erase screenshots/exports/backups, or guarantee forensic erasure from device storage.
-
-## Important limitations
-
-- **Peers see network addresses.** Direct WebRTC ordinarily reveals public IP information to the other participants and to the STUN service. This release does not include TURN. If a direct path cannot be established, chat will not connect.
-- **No offline delivery.** Everyone involved in a message must be connected. Refreshing or closing the only online peer does not create a server copy.
-- **Small rooms only.** Full mesh means each browser creates a connection to every other participant. The practical target is roughly 2–8 people, depending on device and network conditions.
-- **Signaling lock is local.** It reduces ongoing signaling exposure after peers connect, but it is not an access-control or room-closing mechanism and can prevent reconnection after a network change.
-- **Ignore is local.** Ignoring a fingerprint closes this tab's P2P link and suppresses that fingerprint for the rest of this room session. It is not a persistent or server-side block, does not revoke the invite, and cannot stop that peer from contacting others.
-- **Trust metadata is visible.** Signed trust announcements and delivery recipient sets reveal part of the directional trust graph to connected room peers even though message plaintext stays encrypted.
-- **No delivery receipts.** A local data-channel send is not proof that a peer received, decrypted, displayed, or read a message.
-- **Untrusted plaintext can still be harmful.** A valid signature proves control of the displayed key, not that the human is verified or that links and instructions are safe.
-- **No remote purge.** A participant controls their own local copy.
-- **No Signal-style ratchet.** This MVP does not claim forward secrecy or post-compromise security at the application-message layer.
-- **Cloudflare still has metadata.** TLS termination, request IP addresses, timing, derived room IDs, temporary peer IDs, and WebSocket sizes are visible to infrastructure even though signaling bodies are encrypted.
-- **A compromised endpoint wins.** Malware, a hostile browser extension, an unlocked device, malicious participant, or modified application bundle can read plaintext and unlocked keys.
-- **Web delivery is a trust point.** On first install the app pins a build-specific shell, including the stamped integrity worker, and forces a reload through the new controller. The first document still executes before that control exists, and a malicious origin can replace the Service Worker/update response. Comparing the displayed SHA-256 build digest with the matching GitHub Actions artifact through an independent path detects some deployment changes; it does not make a compromised endpoint or origin safe.
-- **Post-quantum authentication is not provided.** The ML-KEM-768 layer is intended to strengthen confidentiality against harvest-now/decrypt-later attacks. Identity signatures and fingerprint authentication remain based on classical OpenPGP Curve25519 primitives.
-
-## Privacy defaults
-
-The application ships with:
-
-- `script-src 'self'`, `connect-src 'self'`, `object-src 'none'`, Trusted Types, framing denial, and cross-origin isolation headers;
-- a disabled Permissions Policy for camera, microphone, location, USB, payment, and other unused capabilities;
-- `Referrer-Policy: no-referrer`, no-store/no-transform network/CDN caching directives, and HSTS;
-- no CDN scripts, third-party fonts, trackers, RUM, or analytics SDK;
-- one expected same-origin integrity Service Worker, stamped for each shell build, which uses a build-specific cache containing only manifest-verified public shell assets and blocks unlisted document/script/style/worker loads once it controls the page;
-- `observability.enabled: false` in `wrangler.jsonc`; and
-- CI/build rejection of known analytics markers and external HTML script/style references, recomputation of every manifest asset/shell/build digest and worker stamp, and a CI-uploaded integrity manifest/build digest; GitHub Actions dependencies are pinned to full commit SHAs.
-
-These controls reduce exposure; they do not eliminate Cloudflare's infrastructure metadata or the risks listed above.
-
-## Security reports and contributing
-
-Read [SECURITY.md](SECURITY.md) before reporting a vulnerability. Development and cryptographic change rules are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing cryptography, signed fields, persistent trust, peer introduction, browser storage, integrity controls, translations, ICE behavior, or security headers.
 
 ## License
 

@@ -26,9 +26,10 @@ export function sha256DigestEncodings(base64Url: string): IntegrityDigestEncodin
 export const INTEGRITY_CONSOLE_COMMAND = `await (async () => {
   const registration = await navigator.serviceWorker.ready;
   const worker = navigator.serviceWorker.controller;
-  const expectedWorkerUrl = new URL("/integrity-worker.js", location.origin).href;
-  if (!worker || worker.scriptURL !== expectedWorkerUrl) {
-    throw new Error("The expected QuietWire integrity worker does not control this page.");
+  const expectedScope = new URL(".", location.href).href;
+  const expectedWorkerUrl = new URL("integrity-worker.js", expectedScope).href;
+  if (registration.scope !== expectedScope || !worker || worker.scriptURL !== expectedWorkerUrl) {
+    throw new Error("The expected KageTamga integrity worker does not control this page.");
   }
   if (registration.waiting) {
     throw new Error("A waiting integrity-worker update must be resolved before comparison.");
@@ -64,7 +65,7 @@ export const INTEGRITY_CONSOLE_COMMAND = `await (async () => {
     base64Url: result,
     hex: Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
   });
-  console.log("QuietWire build digest (SHA-256, Base64URL unpadded):", output.base64Url);
-  console.log("QuietWire build digest (SHA-256, lowercase hex):", output.hex);
+  console.log("KageTamga build digest (SHA-256, Base64URL unpadded):", output.base64Url);
+  console.log("KageTamga build digest (SHA-256, lowercase hex):", output.hex);
   return output;
 })()`;
