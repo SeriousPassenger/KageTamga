@@ -13,6 +13,7 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "./lib/i18n";
+import { sha256DigestEncodings } from "./lib/integrity-digest";
 import { roomSecretFromHash } from "./lib/room";
 import { verifyIntegrityWorker } from "./lib/preflight";
 
@@ -26,6 +27,10 @@ export default function App() {
   const [developerMode, setDeveloperMode] = useState(false);
   const [buildDigest, setBuildDigest] = useState<string>();
   const t = useMemo(() => createTranslator(locale), [locale]);
+  const buildDigestEncodings = useMemo(
+    () => buildDigest ? sha256DigestEncodings(buildDigest) : undefined,
+    [buildDigest],
+  );
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -166,7 +171,11 @@ export default function App() {
           <summary>{t("debugApp")} · {t("debugRedacted")}</summary>
           <pre>{JSON.stringify({
             app: { name: "QuietWire", version: "0.1.0", protocolVersion: 1, locale },
-            build: { digestAlgorithm: "SHA-256", digest: buildDigest ?? null },
+            build: {
+              digestAlgorithm: "SHA-256",
+              digestBase64Url: buildDigestEncodings?.base64Url ?? null,
+              digestHex: buildDigestEncodings?.hex ?? null,
+            },
             runtime: {
               secureContext: window.isSecureContext,
               crossOriginIsolated: window.crossOriginIsolated,

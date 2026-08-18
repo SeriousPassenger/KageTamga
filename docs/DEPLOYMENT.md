@@ -142,14 +142,16 @@ Run the first-visit injection check in a clean disposable browser profile. A pre
 
 ### 4. Compare the integrity build digest
 
-Startup preflight installs/verifies the build-stamped integrity Service Worker and displays the complete SHA-256 build digest covering its pinned asset map, including `/integrity-worker.js`. Developer JSON also shows the digest, and the UI provides a console command that asks the active worker to recompute it from its pinned manifest/cache.
+Startup preflight installs/verifies the build-stamped integrity Service Worker and displays the complete SHA-256 build digest covering its pinned asset map, including `/integrity-worker.js`, in both unpadded Base64URL and lowercase hexadecimal. Developer JSON exposes both encodings, and the UI provides a console command that asks the controlling worker to recompute the digest from its pinned manifest/cache before printing and returning both forms.
 
 For the exact deployed commit:
 
 1. open its successful GitHub Actions run;
-2. read the `QuietWire build digest` value from the log or download the `quietwire-integrity-manifest` artifact;
-3. compare every character with the value reported by the application through a separate trusted view; and
+2. read either `QuietWire build digest` encoding from the log or job summary, or download the artifact whose name is the 64-character lowercase hexadecimal build digest and inspect its existing `integrity-manifest.json` file;
+3. compare every character of the same encoding with the value reported by the application through a separate trusted view; and
 4. investigate any mismatch before creating or unlocking an identity.
+
+GitHub also displays a separate SHA-256 artifact digest after upload. That value verifies the downloadable ZIP produced by GitHub; it is not QuietWire's canonical pinned-shell build digest. The artifact name, Actions summary, embedded README SVG, manifest, application UI, developer JSON, and copied console command all refer to the latter. `npm run build` regenerates the static, same-repository `docs/build-digest.svg` README embed, and CI rejects a stale checked-in embed. No external badge or script is used.
 
 This is a trust-on-first-use consistency check, not an origin-independent signature. Stamping and manifest coverage detect an inconsistent worker/build pair, and first install reloads through the controller, but the initial page executes before control exists and every worker/update response still comes from the same origin. A compromised GitHub/build chain also defeats the comparison.
 
@@ -161,7 +163,7 @@ Cloudflare still sees client IP addresses at the connection layer; encryption ca
 
 ### 6. Inspect developer JSON boundaries
 
-Enable **Developer JSON** and inspect the application, room, peer, and individual-message metadata panels. Expected metadata includes build digest, secure-context capabilities, room/peer/message IDs, fingerprints, route/trust state, algorithms, recipient counts, and approximate ciphertext sizes. Those metadata panels must keep raw ciphertext redacted or absent.
+Enable **Developer JSON** and inspect the application, room, peer, and individual-message metadata panels. Expected metadata includes both build-digest encodings, secure-context capabilities, room/peer/message IDs, fingerprints, route/trust state, algorithms, recipient counts, and approximate ciphertext sizes. Those metadata panels must keep raw ciphertext redacted or absent.
 
 Then explicitly expand one message's nested **raw encrypted transport JSON**. It is expected to contain the signed delivery manifest and exact encrypted hybrid envelope, including recipient fingerprints, ciphertext, signatures, nonces, salts, and ML-KEM encapsulations. It is opt-in, per-message, and should remain collapsed by default. Neither this raw view nor the metadata panels may contain a passphrase, private key, room secret, or message plaintext.
 

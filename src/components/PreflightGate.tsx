@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { TranslationKey, Translator } from "../lib/i18n";
 import {
+  INTEGRITY_CONSOLE_COMMAND,
+  sha256DigestEncodings,
+} from "../lib/integrity-digest";
+import {
   PREFLIGHT_CHECKS,
   runPreflight,
   verifyIntegrityWorker,
@@ -23,9 +27,6 @@ const labelKeys: Record<PreflightCheckId, TranslationKey> = {
   "resource-isolation": "checkRuntimeResources",
   signaling: "checkSignalingService",
 };
-
-const consoleCommand =
-  "await (async()=>{const r=await navigator.serviceWorker.ready,w=r.active||navigator.serviceWorker.controller,c=new MessageChannel(),p=new Promise((ok,fail)=>{c.port1.onmessage=e=>e.data.ok?ok(e.data.buildDigest):fail(Error(e.data.error))});w.postMessage({type:'VERIFY_PINNED_SHELL'},[c.port2]);const d=await p;console.log('QuietWire build digest:',d);return d})()";
 
 function initialResults(): Record<PreflightCheckId, PreflightResult> {
   return Object.fromEntries(
@@ -81,9 +82,13 @@ export function PreflightGate({ t, onContinue }: PreflightGateProps) {
     () => PREFLIGHT_CHECKS.map((id) => results[id]).find((result) => result.status === "failed"),
     [results],
   );
+  const digestEncodings = useMemo(
+    () => digest ? sha256DigestEncodings(digest) : undefined,
+    [digest],
+  );
 
   async function copyCommand() {
-    await navigator.clipboard.writeText(consoleCommand);
+    await navigator.clipboard.writeText(INTEGRITY_CONSOLE_COMMAND);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1_500);
   }
@@ -120,11 +125,20 @@ export function PreflightGate({ t, onContinue }: PreflightGateProps) {
           })}
         </ol>
 
-        {complete && digest && (
+        {complete && digestEncodings && (
           <details className="integrity-box">
             <summary>{t("integrityTitle")}: SHA-256</summary>
             <p>{t("integrityCompare")}</p>
-            <code className="digest">{digest}</code>
+            <div className="digest-values">
+              <div>
+                <strong className="digest-label">Base64URL · unpadded</strong>
+                <code className="digest">{digestEncodings.base64Url}</code>
+              </div>
+              <div>
+                <strong className="digest-label">SHA-256 · lowercase hex</strong>
+                <code className="digest">{digestEncodings.hex}</code>
+              </div>
+            </div>
             <div className="button-row">
               <button className="button secondary" type="button" onClick={() => void copyCommand()}>
                 {copied ? t("copied") : t("copyConsoleCommand")}
