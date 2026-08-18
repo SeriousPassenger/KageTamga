@@ -1,0 +1,40 @@
+{
+  "name": "cloudflare-p2p-e2ee-chat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && wrangler dev",
+    "dev:ui": "vite",
+    "build": "tsc -b && vite build && node scripts/generate-third-party-licenses.mjs && node scripts/stamp-integrity-worker.mjs && node scripts/generate-integrity-manifest.mjs && node scripts/verify-build.mjs",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "security:verify": "node scripts/verify-build.mjs",
+    "licenses:generate": "node scripts/generate-third-party-licenses.mjs"
+  },
+  "dependencies": {
+    "@noble/post-quantum": "0.7.0",
+    "openpgp": "6.3.1",
+    "qrcode": "1.5.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260818.1",
+    "@types/node": "24.10.13",
+    "@types/qrcode": "1.5.6",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.5",
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "vitest": "4.1.10",
+    "wrangler": "4.124.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
