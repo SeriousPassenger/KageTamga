@@ -1,5 +1,7 @@
 # QuietWire
 
+[![Current QuietWire SHA-256 build digest in hexadecimal and Base64URL](docs/build-digest.svg)](https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat/actions)
+
 QuietWire is a browser-first, peer-to-peer, end-to-end encrypted chat that deploys to Cloudflare Workers. Every HTTP request passes through the Worker for HTTPS enforcement and security headers before the Static Assets binding serves the application; a Durable Object temporarily relays encrypted WebRTC setup packets. Chat messages travel directly between participants over WebRTC data channels. The Worker does not store messages, room secrets, private keys, or public keys.
 
 > **Security status:** this is an initial, unaudited MVP—not a production-ready replacement for a professionally audited messenger. The experimental FIPS 203 ML-KEM-768 layer uses a pure-JavaScript implementation and an application-specific composition. Review [SECURITY.md](SECURITY.md) and the [threat model](docs/THREAT-MODEL.md) before relying on it for sensitive communication.

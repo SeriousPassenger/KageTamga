@@ -140,6 +140,8 @@ h2 { font-size: 18px; line-height: 1.25; }
 .integrity-box { margin: 24px 0; padding: 18px; border-radius: 14px; background: #e8eee8; border: 1px solid #b9cbbd; }
 .integrity-box summary { cursor: pointer; font-weight: 750; }
 .integrity-box p { margin: 14px 0; color: var(--muted); line-height: 1.5; }
+.digest-values { display: grid; gap: 12px; }
+.digest-label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 .digest { display: block; overflow-wrap: anywhere; padding: 12px; background: #fff; border: 1px solid #ccd7ce; border-radius: 8px; font-size: 12px; }
 
 .button-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 18px; }

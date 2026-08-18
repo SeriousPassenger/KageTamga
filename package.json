@@ -6,13 +6,14 @@
   "scripts": {
     "dev": "npm run build && wrangler dev",
     "dev:ui": "vite",
-    "build": "tsc -b && vite build && node scripts/generate-third-party-licenses.mjs && node scripts/stamp-integrity-worker.mjs && node scripts/generate-integrity-manifest.mjs && node scripts/verify-build.mjs",
+    "build": "tsc -b && vite build && node scripts/generate-third-party-licenses.mjs && node scripts/stamp-integrity-worker.mjs && node scripts/generate-integrity-manifest.mjs && node scripts/verify-build.mjs && node scripts/generate-build-digest-svg.mjs",
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run test && npm run build",
     "security:verify": "node scripts/verify-build.mjs",
+    "integrity:show": "node scripts/print-integrity-digest.mjs",
     "licenses:generate": "node scripts/generate-third-party-licenses.mjs"
   },
   "dependencies": {
