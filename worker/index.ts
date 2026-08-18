@@ -38,7 +38,7 @@ const securityHeaders: Record<string, string> = {
     "frame-ancestors 'none'",
     "manifest-src 'self'",
     "require-trusted-types-for 'script'",
-    "trusted-types default",
+    "trusted-types quietwire",
   ].join("; "),
   "Cross-Origin-Opener-Policy": "same-origin",
   "Cross-Origin-Embedder-Policy": "require-corp",

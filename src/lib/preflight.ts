@@ -6,6 +6,7 @@ import {
 } from "./hybrid-crypto";
 import { randomId, utf8 } from "./encoding";
 import { assertSupportedOpenPgpKey } from "./pgp-policy";
+import { integrityWorkerRegistrationUrl } from "./trusted-types";
 
 export type PreflightCheckId =
   | "secure-context"
@@ -264,10 +265,13 @@ export async function verifyIntegrityWorker(): Promise<string> {
   let registration = registrations.find(
     (candidate) => candidate.active?.scriptURL === expectedScript,
   );
-  registration ??= await navigator.serviceWorker.register(expectedScript, {
-    scope: "/",
-    updateViaCache: "none",
-  });
+  registration ??= await navigator.serviceWorker.register(
+    integrityWorkerRegistrationUrl(expectedScript),
+    {
+      scope: "/",
+      updateViaCache: "none",
+    },
+  );
   await withTimeout(
     navigator.serviceWorker.ready,
     30_000,
@@ -327,6 +331,7 @@ async function checkSignalingService(): Promise<void> {
   const shellCsp = shell.headers.get("Content-Security-Policy") ?? "";
   if (
     !shellCsp.includes("require-trusted-types-for 'script'") ||
+    !shellCsp.includes("trusted-types quietwire") ||
     shell.headers.get("Cross-Origin-Opener-Policy") !== "same-origin" ||
     shell.headers.get("Cross-Origin-Embedder-Policy") !== "require-corp" ||
     !shell.headers.get("Permissions-Policy")
