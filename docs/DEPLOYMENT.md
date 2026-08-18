@@ -146,12 +146,12 @@ Startup preflight installs/verifies the build-stamped integrity Service Worker a
 
 For the exact deployed commit:
 
-1. open its successful GitHub Actions run;
-2. read either `QuietWire build digest` encoding from the log or job summary, or download the artifact whose name is the 64-character lowercase hexadecimal build digest and inspect its existing `integrity-manifest.json` file;
+1. open the repository's main source page through a separate trusted view and read either encoding from the static digest card at the top of its README;
+2. optionally confirm the same value in the successful GitHub Actions log/job summary, or download the artifact whose name is the 64-character lowercase hexadecimal build digest and inspect its existing `integrity-manifest.json` file;
 3. compare every character of the same encoding with the value reported by the application through a separate trusted view; and
 4. investigate any mismatch before creating or unlocking an identity.
 
-GitHub also displays a separate SHA-256 artifact digest after upload. That value verifies the downloadable ZIP produced by GitHub; it is not QuietWire's canonical pinned-shell build digest. The artifact name, Actions summary, embedded README SVG, manifest, application UI, developer JSON, and copied console command all refer to the latter. `npm run build` regenerates the static, same-repository `docs/build-digest.svg` README embed, and CI rejects a stale checked-in embed. No external badge or script is used.
+GitHub also displays a separate SHA-256 artifact digest after upload. That value verifies the downloadable ZIP produced by GitHub; it is not QuietWire's canonical pinned-shell build digest. The main source page's embedded README SVG, artifact name, Actions summary, manifest, application UI, developer JSON, and copied console command all refer to the latter. `npm run build` regenerates the static, same-repository `docs/build-digest.svg` README embed, and CI rejects a stale checked-in embed. No external badge or script is used.
 
 This is a trust-on-first-use consistency check, not an origin-independent signature. Stamping and manifest coverage detect an inconsistent worker/build pair, and first install reloads through the controller, but the initial page executes before control exists and every worker/update response still comes from the same origin. A compromised GitHub/build chain also defeats the comparison.
 

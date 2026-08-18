@@ -29,6 +29,8 @@ jobs:
         run: node scripts/print-integrity-digest.mjs
       - name: Verify the README digest embed is current
         run: git diff --exit-code -- docs/build-digest.svg
+      - name: Verify the README browser command is current
+        run: node scripts/sync-readme-integrity-command.mjs --check
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.integrity.outputs.artifact_name }}

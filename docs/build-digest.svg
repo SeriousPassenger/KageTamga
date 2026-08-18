@@ -5,8 +5,8 @@
   <rect x="1" y="1" width="1098" height="224" rx="17" fill="none" stroke="#3a654d" stroke-width="2"/>
   <text x="32" y="43" fill="#f3fff7" font-family="system-ui, sans-serif" font-size="25" font-weight="700">Current QuietWire build digest · SHA-256</text>
   <text x="32" y="78" fill="#8ec7a5" font-family="system-ui, sans-serif" font-size="14" font-weight="700">LOWERCASE HEX · ARTIFACT NAME</text>
-  <text x="32" y="106" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">90b0ca26b1786f4cc3c95b6b0ccacf8c124789892978c1040805047b02c3a238</text>
+  <text x="32" y="106" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">534fa2fa5788febc9fbfb4e533d22a1842a95230c9cc6158e75c625d0f3f5ffa</text>
   <text x="32" y="145" fill="#8ec7a5" font-family="system-ui, sans-serif" font-size="14" font-weight="700">BASE64URL · UNPADDED</text>
-  <text x="32" y="174" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">kLDKJrF4b0zDyVtrDMrPjBJHiYkpeMEECAUEewLDojg</text>
-  <text x="32" y="205" fill="#a8b8ae" font-family="system-ui, sans-serif" font-size="13">Generated locally from integrity-manifest.json · compare with the matching GitHub Actions run</text>
+  <text x="32" y="174" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">U0-i-leI_ryfv7TlM9IqGEKpUjDJzGFY51xiXQ8_X_o</text>
+  <text x="32" y="205" fill="#a8b8ae" font-family="system-ui, sans-serif" font-size="13">Generated locally from integrity-manifest.json · independently compare with the deployed app</text>
 </svg>

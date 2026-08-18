@@ -145,11 +145,11 @@ export function PreflightGate({ t, onContinue }: PreflightGateProps) {
               </button>
               <a
                 className="button ghost"
-                href="https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat/actions"
+                href="https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat"
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                GitHub Actions ↗
+                GitHub source ↗
               </a>
             </div>
           </details>

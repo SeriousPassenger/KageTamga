@@ -1,6 +1,64 @@
 # QuietWire
 
-[![Current QuietWire SHA-256 build digest in hexadecimal and Base64URL](docs/build-digest.svg)](https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat/actions)
+[![Current QuietWire SHA-256 build digest in hexadecimal and Base64URL](docs/build-digest.svg)](https://github.com/SeriousPassenger/cloudflare-p2p-e2ee-chat)
+
+<!-- quietwire-integrity-console:start -->
+## Verify the deployed build in your browser
+
+After QuietWire passes mandatory preflight, open the deployed app's browser developer console and paste this complete command:
+
+```js
+await (async () => {
+  const registration = await navigator.serviceWorker.ready;
+  const worker = navigator.serviceWorker.controller;
+  const expectedWorkerUrl = new URL("/integrity-worker.js", location.origin).href;
+  if (!worker || worker.scriptURL !== expectedWorkerUrl) {
+    throw new Error("The expected QuietWire integrity worker does not control this page.");
+  }
+  if (registration.waiting) {
+    throw new Error("A waiting integrity-worker update must be resolved before comparison.");
+  }
+
+  const channel = new MessageChannel();
+  const result = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Integrity verification timed out.")), 10000);
+    channel.port1.onmessage = ({ data }) => {
+      clearTimeout(timeout);
+      if (data?.ok && typeof data.buildDigest === "string") resolve(data.buildDigest);
+      else reject(new Error(data?.error || "Integrity verification failed."));
+    };
+    worker.postMessage({ type: "VERIFY_PINNED_SHELL" }, [channel.port2]);
+  });
+
+  if (!/^[A-Za-z0-9_-]{43}$/.test(result)) {
+    throw new Error("The worker returned a non-canonical SHA-256 digest.");
+  }
+  const padded = result.replaceAll("-", "+").replaceAll("_", "/").padEnd(44, "=");
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const canonical = btoa(String.fromCharCode(...bytes))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+  if (bytes.length !== 32 || canonical !== result) {
+    throw new Error("The worker returned a non-canonical SHA-256 digest.");
+  }
+
+  const output = Object.freeze({
+    algorithm: "SHA-256",
+    base64Url: result,
+    hex: Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+  });
+  console.log("QuietWire build digest (SHA-256, Base64URL unpadded):", output.base64Url);
+  console.log("QuietWire build digest (SHA-256, lowercase hex):", output.hex);
+  return output;
+})()
+```
+
+It requires the exact root-scoped `/integrity-worker.js` controller, asks that worker to reverify its pinned manifest and cache, validates the returned 32-byte SHA-256 value, and prints and returns both lowercase hexadecimal and unpadded Base64URL encodings. Compare either complete value with the static digest card above through a separate view of the repository's main source page.
+
+> This is a local pinned-shell consistency check, not a trustless proof. First-use delivery, later Service Worker updates, GitHub, the build environment, the browser, and the endpoint remain trust boundaries.
+<!-- quietwire-integrity-console:end -->
 
 QuietWire is a browser-first, peer-to-peer, end-to-end encrypted chat that deploys to Cloudflare Workers. Every HTTP request passes through the Worker for HTTPS enforcement and security headers before the Static Assets binding serves the application; a Durable Object temporarily relays encrypted WebRTC setup packets. Chat messages travel directly between participants over WebRTC data channels. The Worker does not store messages, room secrets, private keys, or public keys.
 
