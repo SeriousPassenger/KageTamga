@@ -13,7 +13,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="226" v
   <text x="32" y="106" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">${digest.hex}</text>
   <text x="32" y="145" fill="#8ec7a5" font-family="system-ui, sans-serif" font-size="14" font-weight="700">BASE64URL · UNPADDED</text>
   <text x="32" y="174" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">${digest.base64Url}</text>
-  <text x="32" y="205" fill="#a8b8ae" font-family="system-ui, sans-serif" font-size="13">Generated locally from integrity-manifest.json · compare with the matching GitHub Actions run</text>
+  <text x="32" y="205" fill="#a8b8ae" font-family="system-ui, sans-serif" font-size="13">Generated locally from integrity-manifest.json · independently compare with the deployed app</text>
 </svg>
 `;
 
