@@ -6,6 +6,10 @@ import {
 } from "./hybrid-crypto";
 import { randomId, utf8 } from "./encoding";
 import { assertSupportedOpenPgpKey } from "./pgp-policy";
+import {
+  integrityBootstrapAction,
+  waitForExpectedController,
+} from "./service-worker-bootstrap";
 import { integrityWorkerRegistrationUrl } from "./trusted-types";
 
 export type PreflightCheckId =
@@ -42,6 +46,31 @@ export const PREFLIGHT_CHECKS: readonly PreflightCheckId[] = [
 // installs therefore reload once and only let the pinned Service Worker serve the
 // application on the following navigation.
 const integrityControlledAtStartup = Boolean(navigator.serviceWorker?.controller);
+const INTEGRITY_RELOAD_KEY = "quietwire.integrity-reload-attempt.v1";
+
+function integrityReloadAlreadyAttempted(): boolean {
+  try {
+    return sessionStorage.getItem(INTEGRITY_RELOAD_KEY) !== null;
+  } catch {
+    throw new Error("Origin-scoped session storage is required to guard the integrity reload.");
+  }
+}
+
+function setIntegrityReloadAttempted(): void {
+  try {
+    sessionStorage.setItem(INTEGRITY_RELOAD_KEY, "1");
+  } catch {
+    throw new Error("Origin-scoped session storage is required to guard the integrity reload.");
+  }
+}
+
+function clearIntegrityReloadAttempt(): void {
+  try {
+    sessionStorage.removeItem(INTEGRITY_RELOAD_KEY);
+  } catch {
+    throw new Error("Origin-scoped session storage is required to guard the integrity reload.");
+  }
+}
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timeout: number | undefined;
@@ -272,24 +301,49 @@ export async function verifyIntegrityWorker(): Promise<string> {
       updateViaCache: "none",
     },
   );
-  await withTimeout(
+  const readyRegistration = await withTimeout(
     navigator.serviceWorker.ready,
     30_000,
     "The integrity Service Worker did not become ready.",
   );
-  if (!integrityControlledAtStartup) {
-    location.reload();
-    throw new Error("Reloading through the pinned application shell.");
-  }
+  registration = readyRegistration;
   if (registration.scope !== expectedScope) {
     throw new Error("The integrity Service Worker does not control the complete origin scope.");
   }
   if (registration.waiting) {
     throw new Error("An application update is waiting. Close every app tab, reopen, and verify again.");
   }
-  const worker = registration.active ?? navigator.serviceWorker.controller;
-  if (!worker) throw new Error("The integrity Service Worker did not activate.");
+  const action = integrityBootstrapAction(
+    integrityControlledAtStartup,
+    integrityReloadAlreadyAttempted(),
+  );
+  if (action === "stop") {
+    clearIntegrityReloadAttempt();
+    throw new Error(
+      "The integrity Service Worker did not control the page after one guarded reload. Retry once; if it persists, clear this origin's site data.",
+    );
+  }
 
+  if (action === "reload") {
+    const activeWorker = registration.active;
+    if (!activeWorker) throw new Error("The integrity Service Worker did not activate.");
+    await requestPinnedShellVerification(activeWorker);
+    await waitForExpectedController(navigator.serviceWorker, expectedScript);
+    setIntegrityReloadAttempted();
+    location.reload();
+    throw new Error("Reloading once through the verified pinned application shell.");
+  }
+
+  const worker = navigator.serviceWorker.controller;
+  if (!worker || worker.scriptURL !== expectedScript) {
+    throw new Error("The verified integrity Service Worker does not control this page.");
+  }
+  const buildDigest = await requestPinnedShellVerification(worker);
+  clearIntegrityReloadAttempt();
+  return buildDigest;
+}
+
+async function requestPinnedShellVerification(worker: ServiceWorker): Promise<string> {
   const result = await new Promise<{ ok?: boolean; error?: string; buildDigest?: string }>((resolve, reject) => {
     const channel = new MessageChannel();
     const timeout = window.setTimeout(
