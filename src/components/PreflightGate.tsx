@@ -111,7 +111,9 @@ export function PreflightGate({ t, onContinue }: PreflightGateProps) {
                 </span>
                 <span>
                   <strong>{t(labelKeys[id])}</strong>
-                  {result.status === "failed" && <small>{t("browserUnsupported")}</small>}
+                  {result.status === "failed" && (
+                    <small>{result.detail ?? t("browserUnsupported")}</small>
+                  )}
                 </span>
               </li>
             );
