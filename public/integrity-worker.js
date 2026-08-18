@@ -48,15 +48,32 @@ self.addEventListener("message", (event) => {
 });
 
 async function installPinnedShell() {
-  const manifestResponse = await fetch(MANIFEST_URL, { cache: "no-store", credentials: "omit" });
+  const manifestResponse = await fetch(MANIFEST_URL, {
+    cache: "no-store",
+    credentials: "omit",
+    redirect: "error",
+  });
   if (!manifestResponse.ok) throw new Error("Integrity manifest unavailable");
+  if (manifestResponse.url !== new URL(MANIFEST_URL, self.location.origin).href) {
+    throw new Error("Integrity manifest resolved to an unexpected URL");
+  }
   const manifest = await manifestResponse.clone().json();
   validateManifest(manifest);
   const cache = await caches.open(CACHE_NAME);
   await cache.put(MANIFEST_URL, manifestResponse);
   for (const [path, expected] of Object.entries(manifest.assets)) {
-    const response = await fetch(path, { cache: "no-store", credentials: "omit" });
+    // Cloudflare Static Assets redirects /index.html to /. Fetch the canonical
+    // route directly so the cached navigation Response has no redirect URL list.
+    const sourcePath = path === "/index.html" ? "/" : path;
+    const response = await fetch(sourcePath, {
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
+    });
     if (!response.ok) throw new Error(`Pinned asset unavailable: ${path}`);
+    if (response.url !== new URL(sourcePath, self.location.origin).href) {
+      throw new Error(`Pinned asset resolved to an unexpected URL: ${path}`);
+    }
     await assertDigest(response.clone(), expected, path);
     await cache.put(path, response);
   }
